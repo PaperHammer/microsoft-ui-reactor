@@ -374,6 +374,10 @@ Conventions for contributors:
 
 ### Fixed
 
+- Async resource hooks detect dependency changes even when hashes collide and
+  treat mismatched cached dependencies as a miss, preventing wrong-query data
+  in `UseResource` and `UseInfiniteResource` (spec 020 §6.2, §7).
+
 - **A conditional child no longer shifts its unkeyed siblings** (issue #1423). The
   container factories drop `null` / `Empty()` arguments and flatten `Group(...)`, so
   toggling `cond ? X : Empty()` moved every later sibling down one index and the

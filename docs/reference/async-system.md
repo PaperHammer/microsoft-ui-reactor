@@ -264,7 +264,8 @@ UseResourceCore:
   newKey = options.CacheKey ?? $"{hookId}/{depsHash(deps)}"
 
   firstRender = state.LastDeps is null
-  depsChanged = !firstRender && state.CacheKey != newKey
+  depsChanged = !firstRender && (state.CacheKey != newKey ||
+      (options.CacheKey is null && !DepsEqual(state.LastDeps, deps)))
 
   if firstRender or depsChanged:
       state.TransitionToKey(newKey, deps)     // cancels old CTS, unsubscribe/subscribe
@@ -279,11 +280,17 @@ UseResourceCore:
 1. Cancels any in-flight CTS for the old key.
 2. If the old key was non-empty and different, calls `Cache.Unsubscribe(oldKey)`
    and `_focusService?.Unenroll(oldKey)`.
-3. Updates `CacheKey` to `newKey`, calls `Cache.Subscribe(newKey)`, enrolls with
-   focus service if needed, snapshots `LastDeps`.
+3. Updates `CacheKey` to `newKey`. Subscribes and enrolls on the first query or a
+   changed key; a same-key collision keeps the existing subscription. Snapshots `LastDeps`.
+
+Resource-written cache entries also carry the hook's dependency snapshot. A matching
+hash with unequal dependencies is a cache miss, including each infinite-resource
+page and its predecessor check. Colliding queries replace one another in the existing
+slot, so returning to an earlier query may refetch. Explicit `CacheKey` and public
+`QueryCache.Set` writes retain their explicit-key behavior; TTL and eviction are unchanged.
 
 `EnterKey` (`UseResource.cs:178-207`) is the new-key dispatcher:
-- `Cache.TryGet<T>(key, out entry)`:
+- `Cache.TryGetResource<T>(key, state.CacheDeps, out entry)`:
   - Age `<= StaleTime` → `state.LastValue = Data(entry.Value)`. Done.
   - Age `>  StaleTime` → `state.LastValue = Reloading(entry.Value)`, then
     `BeginFetch` to refresh.
