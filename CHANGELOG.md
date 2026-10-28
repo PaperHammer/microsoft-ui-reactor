@@ -380,6 +380,19 @@ Conventions for contributors:
 
 ### Fixed
 
+- **Wrapped third-party controls now get source-map call sites** (spec 010). A factory
+  emitted by `[GenerateReactorWrapper]` (`SettingsCard(...)`, `RadialGauge(...)`) is
+  invisible to the source-map generator, because no source generator sees another's
+  output. Its calls were never stamped, and every DSL call taking one as an argument —
+  `VStack(8, SettingsCard(...))`, `HStack(8, gauge.Width(140))` — failed to bind there
+  and was dropped too, so devtools saw a bare `StackPanel` with no Reactor element.
+  `Reactor.Wrappers.Generator` now intercepts calls to the factories it emits (same line,
+  column and `ReactorSourceMap.Enabled` rules; only when `ReactorSourceMap` is true and
+  the build lists `Microsoft.UI.Reactor.Generated` in `InterceptorsNamespaces`), and the
+  source-map generator re-binds such containing calls as if each wrapper value were
+  already an `Element`, so they keep their location and declared name — or leaves a call
+  unstamped where that could change which overload the real compilation picks.
+
 - **ThemeRef resource overrides follow a `RequestedTheme` set outside the Reactor tree**
   (follow-up to #771). When an app themes a native ancestor of a `ReactorHostControl`
   or a `ReactorHost.ContentTarget`
