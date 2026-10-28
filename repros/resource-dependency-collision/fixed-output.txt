@@ -1,0 +1,6 @@
+Variant: fixed
+Test: Microsoft.UI.Reactor.Tests.Core.ResourceCollisionReproTests.Changing_Query_From_1_32_To_2_1_Must_Fetch_The_New_Result
+Outcome: Passed
+
+query=[1,32], returned=Data { Value = 1/32 }, fetcher calls=1
+query=[2,1], returned=Data { Value = 2/1 }, fetcher calls=2

@@ -1,0 +1,5 @@
+<Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Reactor.Tests'">
+    <Compile Include="$(MSBuildThisFileDirectory)ResourceCollisionReproTests.cs" />
+  </ItemGroup>
+</Project>
