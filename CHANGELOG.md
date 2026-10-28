@@ -257,6 +257,17 @@ Conventions for contributors:
 
 ### Changed
 
+- **Markdown `LinkBuilder` now receives a `MarkdownLink`** (#1436). Breaking: the
+  callback's type changes from `Func<Element[], Uri, Element>` to
+  `Func<MarkdownLink, Element>`. `MarkdownLink` carries the label as plain `Text`
+  (image alt text in place of images, entities decoded, line breaks as spaces), the
+  formatted `Label` (`RichTextBlockElement`, `null` when empty, where the old
+  callback got a 0- or 1-element array), and the validated `Uri`, so setting an
+  accessible name or tooltip no longer means walking the label's inlines. Existing
+  `(label, uri) => ...` callbacks no longer compile; rewrite them as
+  `link => ...` using `link.Label` and `link.Uri`. The URI policy, nesting rules,
+  label styling and null-result error are unchanged.
+
 - **Picker helpers moved to `Microsoft.Windows.Storage.Pickers` and renamed as non-hooks**
   (issue #1374, spec 054 §8.3). Breaking: `UseFilePickerAsync` / `UseMultipleFilesPickerAsync`
   / `UseFolderPickerAsync` / `UseSaveFilePickerAsync` are now `PickFileAsync` /
@@ -442,6 +453,10 @@ Conventions for contributors:
   outer link. If the outer target is rejected, the whole label renders as plain
   text, and a URL inside it does not become a separate link. Links render as
   before when no callback is set.
+- **Markdown numeric character references are decoded** (#1436). `&#65;` and
+  `&#x42;` used to render as literal text; they now render as `A` and `B`, like
+  named entities. Following CommonMark, `&#0;`, surrogate code points and values
+  above U+10FFFF render as U+FFFD.
 - **Opening a `Flyout` from state no longer replaces the window with a render error**
   (issue #1419). `Flyout(Button(...), ...) with { IsOpen = open }` opened through
   `FlyoutBase.ShowAttachedFlyout`, but a Button/SplitButton target holds its flyout in the
