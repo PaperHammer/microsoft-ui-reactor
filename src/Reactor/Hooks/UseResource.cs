@@ -8,6 +8,17 @@ namespace Microsoft.UI.Reactor.Hooks;
 /// TanStack Query — zero <see cref="StaleTime"/> (always refetch-on-mount but dedup
 /// concurrent requests), five-minute <see cref="CacheTime"/>.
 /// </summary>
+/// <param name="StaleTime">Freshness interval; null uses zero.</param>
+/// <param name="CacheTime">Retention after the last subscriber leaves; null uses five minutes.</param>
+/// <param name="RetryCount">Number of retries after a failed fetch.</param>
+/// <param name="RefetchOnMount">Whether to fetch on a cache miss.</param>
+/// <param name="CacheKey">
+/// Overrides the generated cache key; null uses a key derived from deps.
+/// When set, the key identifies the query; deps changes alone do not cancel
+/// an in-flight request or start a new fetch. Include values that select
+/// different data in the key, for example <c>$"user:{userId}"</c>.
+/// </param>
+/// <param name="RefetchOnWindowFocus">Whether to opt into window-focus revalidation.</param>
 public sealed record ResourceOptions(
     TimeSpan? StaleTime = null,
     TimeSpan? CacheTime = null,

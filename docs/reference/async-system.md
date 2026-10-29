@@ -268,7 +268,7 @@ UseResourceCore:
       (options.CacheKey is null && !DepsEqual(state.LastDeps, deps)))
 
   if firstRender or depsChanged:
-      state.TransitionToKey(newKey, deps)     // cancels old CTS, unsubscribe/subscribe
+      state.TransitionToKey(newKey, deps)     // cancels old CTS; keeps subscription if key is unchanged
       EnterKey(state, fetcher, options)       // dispatch on cache state
   else:
       ReconcileWithCache(state, fetcher, options)
@@ -276,7 +276,7 @@ UseResourceCore:
   return state.LastValue
 ```
 
-`TransitionToKey` (`UseResource.cs:447-465`):
+`TransitionToKey` (`UseResource.cs:464-489`):
 1. Cancels any in-flight CTS for the old key.
 2. If the old key was non-empty and different, calls `Cache.Unsubscribe(oldKey)`
    and `_focusService?.Unenroll(oldKey)`.
@@ -284,12 +284,13 @@ UseResourceCore:
    changed key; a same-key collision keeps the existing subscription. Snapshots `LastDeps`.
 
 Resource-written cache entries also carry the hook's dependency snapshot. A matching
-hash with unequal dependencies is a cache miss, including each infinite-resource
-page and its predecessor check. Colliding queries replace one another in the existing
+hash with unequal dependencies is a cache miss, including infinite-resource page
+cache reads. Page sequencing also checks the resource's own loaded pages (§5.2).
+Colliding queries replace one another in the existing
 slot, so returning to an earlier query may refetch. Explicit `CacheKey` and public
 `QueryCache.Set` writes retain their explicit-key behavior; TTL and eviction are unchanged.
 
-`EnterKey` (`UseResource.cs:178-207`) is the new-key dispatcher:
+`EnterKey` (`UseResource.cs:191-220`) is the new-key dispatcher:
 - `Cache.TryGetResource<T>(key, state.CacheDeps, out entry)`:
   - Age `<= StaleTime` → `state.LastValue = Data(entry.Value)`. Done.
   - Age `>  StaleTime` → `state.LastValue = Reloading(entry.Value)`, then
@@ -298,7 +299,7 @@ slot, so returning to an earlier query may refetch. Explicit `CacheKey` and publ
   no fetch.
 - Cache miss + default → `BeginFetch`.
 
-`BeginFetch` (`UseResource.cs:226-236`) dedupes on `state.InFlight`, disposes
+`BeginFetch` (`UseResource.cs:239-249`) dedupes on `state.InFlight`, disposes
 any old CTS, mints a new `CancellationTokenSource`, and calls
 `StartAttempt(..., attempt: 0, inlineSyncResult: true)`.
 
@@ -389,25 +390,26 @@ return;` at line 475). The timer is self-disposing in its own callback.
 ### 4.6 Cache invalidation propagation
 
 `ResourceHookState` subscribes to `cache.EntryChanged` at construction
-(`UseResource.cs:424`). The handler (line 430):
+(`UseResource.cs:441`). The handler (`UseResource.cs:447-455`):
 
 ```csharp
 private void OnEntryChanged(string key)
 {
     if (IsDisposed) return;
     if (!string.Equals(key, CacheKey, StringComparison.Ordinal)) return;
-    if (LastValue is AsyncValue<T>.Data && !Cache.TryGet<T>(key, out _))
+    if (LastValue is AsyncValue<T>.Data && !Cache.TryGetResource<T>(key, CacheDeps, out _))
         RequestRerender();
 }
 ```
 
-The narrow trigger — `LastValue is Data && cache entry is gone` — means the
-hook only reacts to *invalidations* (mutation side-effects, focus revalidation,
-pattern clears). A redundant `Set` that writes an identical value to the
+The narrow trigger — `LastValue is Data && no usable cache entry` — covers
+invalidations (mutation side-effects, focus revalidation, pattern clears) and
+tagged entries whose dependencies differ from the current automatically keyed
+query. A redundant `Set` that writes an identical value to the
 existing entry is ignored here because the cache still has the entry. A
 fresh `Set` with a *different* value *also* doesn't trigger a rerender through
 this path; instead, the next render picks up the new entry via
-`ReconcileWithCache` (which at present only refetches on gone-entry, so a
+`ReconcileWithCache` (which at present only refetches on missing or mismatched entries, so a
 different-value Set from another hook would not flow to this hook until its
 own deps change).
 
@@ -514,20 +516,30 @@ fetches, dedup concurrent pulls, cache per-page results in the shared
 
 Pages are cached in two places:
 
-1. **`InfiniteResource._pages` dictionary** (`InfiniteResource.cs:69`) — the
+1. **`InfiniteResource._pages` dictionary** (`InfiniteResource.cs:79`) — the
    hot-path accessor for `ItemAt`. Subject to LRU eviction when
    `InfiniteResourceOptions.MaxLoadedPages` is set. Holds `PageSlot(IReadOnlyList<TItem>?)`
    — `null` items means in-flight placeholder.
 2. **`QueryCache` under `{keyPrefix}/page:{n}`** — the warm-path. Survives
    LRU eviction from `_pages`; survives unmount-and-remount inside `CacheTime`.
-   `InfiniteHookState.SubscribeKey` (line 331) ref-counts every page key that
+   `InfiniteHookState.SubscribeKey` (`UseInfiniteResource.cs:402-406`) ref-counts every page key that
    this hook has ever loaded or started loading, so the cache retains them
    until unmount.
 
-On `RequestPage`, the hook always checks the `QueryCache` first
-(`UseInfiniteResource.cs:221`). A hit warm-starts the page into `_pages` via
-`Resource.ApplyPageResult`, skipping the network round-trip entirely. This is
-the back/forward-nav-is-instant property.
+On `RequestPage`, the hook checks `QueryCache` first
+(`UseInfiniteResource.cs:242`), validating the entry's dependency snapshot.
+A matching hit warm-starts the page into `_pages` via `Resource.ApplyPageResult`,
+skipping the network round-trip. Navigation can reuse pages while matching
+cache entries remain available; a hash collision may have replaced them.
+
+For cursor sequencing, `HasLoadedPage` (`UseInfiniteResource.cs:395-400`)
+first checks `Resource.HasLoadedPage` (`InfiniteResource.cs:262-266`), then
+falls back to the dependency-aware cache lookup. A page is locally loaded
+only when its page-table entry has non-null `Items`; an in-flight placeholder
+does not count. Another query overwriting the shared cache does not unload
+the resource's own pages. Keeping those pages avoids re-fetching and
+re-applying predecessors, which would also count their items again in
+`ApplyPageResult` and understate `EstimatedRemaining`.
 
 ### 5.3 `ItemAt` — claim-before-release pattern
 
@@ -681,8 +693,23 @@ recent failed page.
 
 ### 5.8 Deps-change restart
 
-`UseInfiniteResourceCore` line 73: compare `state.KeyPrefix` to the freshly-
-computed `newKeyPrefix`. On change, `state.TransitionToDeps(newPrefix, newDeps)`:
+`UseInfiniteResourceCore` (`UseInfiniteResource.cs:76-82`) restarts when the
+computed prefix differs **or** the dependency snapshot is unequal:
+
+```csharp
+if (!string.Equals(state.KeyPrefix, newKeyPrefix, StringComparison.Ordinal)
+    || !ResourceDependencies.DepsEqual(state.LastDeps, deps))
+{
+    state.TransitionToDeps(newKeyPrefix, deps);
+    state.KickOffFirstPage();
+}
+```
+
+Thus a dependency hash collision still restarts pagination even when
+`newKeyPrefix` is unchanged. Unlike `ResourceOptions.CacheKey`, an explicit
+`CacheKeyPrefix` does not disable dependency checks.
+
+`TransitionToDeps` (`UseInfiniteResource.cs:194-216`):
 
 1. Cancels and disposes every in-flight `_pageCts`.
 2. Unsubscribes every entry in `_subscribedKeys` and clears the set.
@@ -694,9 +721,11 @@ computed `newKeyPrefix`. On change, `state.TransitionToDeps(newPrefix, newDeps)`
 5. Sets PendingScope loading back to true; calls `KickOffFirstPage()` which
    enters `RequestPage(0)`.
 
-Previous-key pages remain in `QueryCache` under their old prefix until
-`CacheTime` expires, so a deps change back to the previous value within the
-window hits cache and re-populates instantly.
+When the derived prefix changes, previous-query pages can remain in
+`QueryCache` until eviction. Switching back can reuse them only if the page
+keys and dependency snapshots still match. Colliding queries use the same
+page slots, so a later write can replace an earlier query's pages even within
+`CacheTime`; returning to that query may require fetching those pages again.
 
 ### 5.9 `IDataSource<T>` adapter
 

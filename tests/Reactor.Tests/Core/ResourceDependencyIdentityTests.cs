@@ -20,14 +20,15 @@ public class ResourceDependencyIdentityTests
 
     // Offset cursors and sequential items, as in UseInfiniteResourceTests.FakeFetcher.
     // Start above zero so an unloaded placeholder cannot look like a fetched item.
-    private static Func<string?, CancellationToken, Task<Page<int, string>>> FakeFetcher(int itemOffset, List<int> requests)
+    private static Func<string?, CancellationToken, Task<Page<int, string>>> FakeFetcher(
+        int itemOffset, List<int> requests, int totalCount = 30)
         => (cursor, _) =>
         {
             int start = cursor is null ? 0 : int.Parse(cursor);
             requests.Add(start);
             return Task.FromResult(new Page<int, string>(
                 Enumerable.Range(itemOffset + start, 10).ToArray(),
-                start + 10 < 30 ? (start + 10).ToString() : null, 30));
+                start + 10 < totalCount ? (start + 10).ToString() : null, totalCount));
         };
 
     [Theory]
@@ -70,6 +71,46 @@ public class ResourceDependencyIdentityTests
             Assert.NotNull(key);
             Assert.True(cache.TryGet<int>(key, out var entry));
             Assert.Equal(1, entry.SubscriberCount);
+        }
+        finally { ctx.RunCleanups(); }
+    }
+
+    [Fact]
+    public void Resource_Cancelled_Colliding_Query_Refetches_After_Queued_Cache_Notification()
+    {
+        using var cache = new QueryCache();
+        var ctx = new RenderContext();
+        var dispatcher = new InlineDispatcher();
+        var notifications = new QueuedDispatcher();
+        // Pin the defensive case where a cache notification arrives after a deps change.
+        cache.DispatcherPost = notifications.Post;
+        var options = new ResourceOptions(StaleTime: TimeSpan.FromDays(1));
+        int calls = 0, rerenders = 0;
+        AsyncValue<int> Render(object[] deps, Task<int> task)
+        {
+            ctx.BeginRender(() => rerenders++);
+            var result = ctx.UseResource(_ => { calls++; return task; }, cache, deps, options, dispatcher);
+            ctx.FlushEffects();
+            return result;
+        }
+        try
+        {
+            Assert.Equal(new AsyncValue<int>.Data(42), Render([1, 32], Task.FromResult(42)));
+            // Cancellation keeps the previous Data, while the cache still belongs to [1, 32].
+            Assert.Equal(new AsyncValue<int>.Data(42),
+                Render([2, 1], Task.FromCanceled<int>(new CancellationToken(canceled: true))));
+            Assert.Equal(2, calls);
+            Assert.Equal(0, rerenders);
+
+            // The old write's delayed notification must detect the mismatched deps.
+            notifications.Drain();
+            Assert.Equal(1, rerenders);
+            Assert.Equal(new AsyncValue<int>.Data(99), Render([2, 1], Task.FromResult(99)));
+            Assert.Equal(3, calls);
+
+            // The matching write must not schedule another render.
+            notifications.Drain();
+            Assert.Equal(1, rerenders);
         }
         finally { ctx.RunCleanups(); }
     }
@@ -164,6 +205,42 @@ public class ResourceDependencyIdentityTests
     }
 
     [Fact]
+    public void Resource_Explicit_Key_Does_Not_Cancel_Or_Refetch_When_Deps_Change()
+    {
+        using var cache = new QueryCache();
+        var ctx = new RenderContext();
+        var dispatcher = new InlineDispatcher();
+        var pending = new TaskCompletionSource<int>();
+        var options = new ResourceOptions(CacheKey: "x");
+        CancellationToken firstToken = default;
+        int calls = 0;
+        AsyncValue<int> Render(object[] deps)
+        {
+            ctx.BeginRender(() => { });
+            var result = ctx.UseResource(ct =>
+            {
+                if (calls++ == 0) firstToken = ct;
+                return pending.Task;
+            }, cache, deps, options, dispatcher);
+            ctx.FlushEffects();
+            return result;
+        }
+        try
+        {
+            Assert.IsType<AsyncValue<int>.Loading>(Render([1]));
+            Assert.True(firstToken.CanBeCanceled);
+            Assert.IsType<AsyncValue<int>.Loading>(Render([2]));
+            Assert.Equal(1, calls);
+            Assert.False(firstToken.IsCancellationRequested);
+
+            pending.SetResult(42);
+            Assert.Equal(new AsyncValue<int>.Data(42), Render([2]));
+            Assert.Equal(1, calls);
+        }
+        finally { ctx.RunCleanups(); }
+    }
+
+    [Fact]
     public void Infinite_Colliding_Deps_Cancel_And_Drop_Late_Pages()
     {
         using var cache = new QueryCache();
@@ -201,7 +278,7 @@ public class ResourceDependencyIdentityTests
         InfiniteResource<int> Render(RenderContext target, object[] deps, int itemOffset, List<int> requests)
         {
             target.BeginRender(() => { });
-            var resource = target.UseInfiniteResource(FakeFetcher(itemOffset, requests), cache, deps,
+            var resource = target.UseInfiniteResource(FakeFetcher(itemOffset, requests, totalCount: 40), cache, deps,
                 new InfiniteResourceOptions(PageSize: 10, CacheKeyPrefix: "orders"), new InlineDispatcher());
             target.FlushEffects();
             return resource;
@@ -221,11 +298,18 @@ public class ResourceDependencyIdentityTests
             Assert.Equal(100, resourceA.ItemAt(0));
             Assert.Equal(110, resourceA.ItemAt(10));
 
+            // A still owns its loaded pages even though B replaced their shared cache entries.
+            Assert.Equal(20, resourceA.EstimatedRemaining);
+            resourceA.FetchNext();
+            Assert.Equal(new[] { 0, 10, 20 }, requestsA);
+            Assert.Equal(10, resourceA.EstimatedRemaining);
+            Assert.Equal(120, resourceA.ItemAt(20));
+
             var again = Render(returningA, [1, 32], 100, requestsA);
             again.FetchNext();
             Assert.Equal(100, again.ItemAt(0));
             Assert.Equal(110, again.ItemAt(10));
-            Assert.Equal(new[] { 0, 10, 0, 10 }, requestsA);
+            Assert.Equal(new[] { 0, 10, 20, 0, 10 }, requestsA);
             Assert.Equal(3, cache.Count);
         }
         finally { a.RunCleanups(); b.RunCleanups(); returningA.RunCleanups(); }

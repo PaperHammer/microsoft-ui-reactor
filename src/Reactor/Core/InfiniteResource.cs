@@ -38,6 +38,16 @@ public abstract record LoadState
 /// Tuning for <c>UseInfiniteResource</c>. Defaults: 50 items per page, no LRU cap
 /// (keeps every loaded page), 5-minute <c>CacheTime</c>, 0 <c>StaleTime</c>.
 /// </summary>
+/// <param name="PageSize">Number of items per page.</param>
+/// <param name="MaxLoadedPages">Maximum retained pages; null keeps all loaded pages.</param>
+/// <param name="StaleTime">Stale-time setting; null uses zero.</param>
+/// <param name="CacheTime">Retention after the last subscriber leaves; null uses five minutes.</param>
+/// <param name="CacheKeyPrefix">
+/// Overrides the prefix for page cache keys; null uses a prefix unique to this hook.
+/// Page keys still include the dependency hash and page index. Changing deps
+/// cancels in-flight page requests, resets the page set, and loads the first page
+/// for the new deps, even if the prefix is unchanged.
+/// </param>
 public sealed record InfiniteResourceOptions(
     int PageSize = 50,
     int? MaxLoadedPages = null,
@@ -247,6 +257,12 @@ public sealed class InfiniteResource<TItem>
     internal void MarkPageInFlight(int pageIndex)
     {
         lock (_lock) MarkPageInFlightLocked(pageIndex);
+    }
+
+    internal bool HasLoadedPage(int pageIndex)
+    {
+        lock (_lock)
+            return _pages.TryGetValue(pageIndex, out var slot) && slot.Items is not null;
     }
 
     private void MarkPageInFlightLocked(int pageIndex)

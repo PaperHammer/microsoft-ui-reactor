@@ -394,9 +394,9 @@ internal sealed class InfiniteHookState<TItem, TCursor> : IDisposable
 
     private bool HasLoadedPage(int pageIndex)
     {
-        // Reading through the resource's Items is expensive; we instead rely on the
-        // cache having the page. If present, consider it loaded for sequencing.
-        return _cache.TryGetResource<Page<TItem, TCursor>>(CacheKeyFor(pageIndex), LastDeps, out _);
+        // A colliding cache write does not unload pages retained by this resource.
+        return Resource.HasLoadedPage(pageIndex)
+            || _cache.TryGetResource<Page<TItem, TCursor>>(CacheKeyFor(pageIndex), LastDeps, out _);
     }
 
     private void SubscribeKey(string key)

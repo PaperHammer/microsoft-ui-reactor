@@ -2,6 +2,8 @@ namespace Microsoft.UI.Reactor.Core;
 
 internal static class ResourceDependencies
 {
+    // Keep element-wise object.Equals semantics aligned with RenderContext.DepsEqual.
+    // A null previous array means no dependency snapshot has been recorded.
     internal static bool DepsEqual(object[]? previous, object[] next)
     {
         if (previous is null || previous.Length != next.Length) return false;
