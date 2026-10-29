@@ -1,0 +1,7 @@
+<Project>
+  <!-- Keep this standalone repro independent of the repository's package configuration. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <ImportDirectoryPackagesProps>false</ImportDirectoryPackagesProps>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,10 @@
+Repro build: local-fix
+Reactor: 0.0.0-local+7f46468f3cb1307c7fbf108a6a575849a65084c9
+WindowPersistedScope: Count=2; string? hit=True, value=null; int? hit=True, value=null
+ApplicationPersistedScope: Count=2; string? hit=True, value=null; int? hit=True, value=null
+Hook assignee: saved=null, before unmount=null, after remount=null, expected=null; before: visibleTasks=4/4; after: visibleTasks=4/4
+Hook id: saved=null, before unmount=null, after remount=null, expected=null
+Hook nonempty: saved="saved", before unmount="saved", after remount="saved", expected="saved"
+Hook empty: saved="", before unmount="", after remount="", expected=""
+Hook zero: saved=0, before unmount=0, after remount=0, expected=0
+RESULT: 0 null-restoration failures; non-null and missing-key controls passed.

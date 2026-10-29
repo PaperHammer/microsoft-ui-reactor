@@ -1,0 +1,10 @@
+Repro build: local-fix
+Reactor: 0.0.0-local+7f46468f3cb1307c7fbf108a6a575849a65084c9
+RENDER assigneeId="alice"; visibleTasks=2/4
+ACTION setAssigneeId(null)
+RENDER assigneeId=null; visibleTasks=4/4
+ACTION Navigate away
+UNMOUNT Task filter
+CACHE Count=1; hit=True; value=null
+ACTION Return to tasks
+RENDER assigneeId=null; visibleTasks=4/4

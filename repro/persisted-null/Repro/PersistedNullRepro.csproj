@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <Platforms>x64;ARM64</Platforms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWinUI>true</UseWinUI>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <ReproLabel Condition="'$(ReproLabel)' == ''">source-checkout</ReproLabel>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.2.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools.MSIX" Version="1.7.260930100" />
+    <AssemblyMetadata Include="ReproLabel" Value="$(ReproLabel)" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ReactorDll)' != ''">
+    <Reference Include="Reactor"><HintPath>$(ReactorDll)</HintPath></Reference>
+    <None Include="$([System.IO.Path]::GetDirectoryName('$(ReactorDll)'))/Reactor/Hosting/ReactorApplication.xaml"
+          Link="Reactor/Hosting/ReactorApplication.xaml" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="$([System.IO.Path]::GetDirectoryName('$(ReactorDll)'))/Reactor/Hosting/ReactorApplication.xbf"
+          Link="Reactor/Hosting/ReactorApplication.xbf" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(ReactorDll)' == ''">
+    <ProjectReference Include="$(ReactorRoot)/src/Reactor/Reactor.csproj" />
+  </ItemGroup>
+  <Target Name="RequireReactorSource" BeforeTargets="PrepareForBuild" Condition="'$(ReactorDll)' == '' and '$(ReactorRoot)' == ''">
+    <Error Text="Pass -p:ReactorRoot=PATH_TO_MICROSOFT_UI_REACTOR to build against your checkout." />
+  </Target>
+</Project>
