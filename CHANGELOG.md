@@ -393,6 +393,9 @@ Conventions for contributors:
 
 ### Fixed
 
+- `UsePersisted` restores saved null values for reference and nullable value
+  types instead of falling back to `initialValue` after remount (spec 033 §2).
+
 - **Wrapped third-party controls now get source-map call sites** (spec 010). A factory
   emitted by `[GenerateReactorWrapper]` (`SettingsCard(...)`, `RadialGauge(...)`) is
   invisible to the source-map generator, because no source generator sees another's
