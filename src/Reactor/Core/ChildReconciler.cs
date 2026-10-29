@@ -41,6 +41,14 @@ internal static class ChildReconciler
 
         bool hasKeys = HasAnyKeys(oldFiltered) || HasAnyKeys(newFiltered);
 
+        // Duplicate sibling keys are matched to the wrong controls by the keyed path below;
+        // report them (deduplicated per panel) rather than let that happen silently. Only when
+        // the key sequence changed: an unchanged one was already checked when it first
+        // appeared, here or at mount, so a stable keyed panel's re-render pays one compare
+        // per child (the prefix walk below does the same) rather than a duplicate scan.
+        if (hasKeys && newFiltered.Length > 1 && !SameKeys(oldFiltered, newFiltered))
+            KeyedListDiff.ReportDuplicateSiblingKeys(newFiltered, reconciler, parentControl);
+
         // Spec 042 §6 — read the active Animations.Animate ambient once
         // per reconcile so insert / move / unmount paths can apply the
         // same kind without re-reading AsyncLocal for every child. Stays
@@ -367,14 +375,7 @@ internal static class ChildReconciler
                         || Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
                     && (existingControl ??= children.Get(i)) is FrameworkElement fe)
                 {
-                    if (newEl.HasCallbacks)
-                        Reconciler.SetElementTag(fe, newEl);
-                    else if (Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.RefreshCallSiteTagOnSkip(fe, newEl);
-                    if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
-                        && Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.PublishSourceOnSkip(fe, newEl);
-                    Reconciler.RefreshGestureDragStateOnSkip(fe, oldEl.Modifiers, newEl.Modifiers);
+                    reconciler.RefreshSkippedChildState(fe, oldEl, newEl);
                 }
                 return false;
             }
@@ -462,14 +463,7 @@ internal static class ChildReconciler
                     && prefixLen < childCount
                     && (existingControl ??= children.Get(prefixLen)) is FrameworkElement fe)
                 {
-                    if (newEl.HasCallbacks)
-                        Reconciler.SetElementTag(fe, newEl);
-                    else if (Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.RefreshCallSiteTagOnSkip(fe, newEl);
-                    if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
-                        && Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.PublishSourceOnSkip(fe, newEl);
-                    Reconciler.RefreshGestureDragStateOnSkip(fe, oldEl.Modifiers, newEl.Modifiers);
+                    reconciler.RefreshSkippedChildState(fe, oldEl, newEl);
                 }
                 prefixLen++;
                 continue;
@@ -523,14 +517,7 @@ internal static class ChildReconciler
                     && panelIdx < childCount
                     && (existingControl ??= children.Get(panelIdx)) is FrameworkElement fe)
                 {
-                    if (newEl.HasCallbacks)
-                        Reconciler.SetElementTag(fe, newEl);
-                    else if (Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.RefreshCallSiteTagOnSkip(fe, newEl);
-                    if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
-                        && Reconciler.CallSiteChangedOnSkip(oldEl, newEl))
-                        reconciler.PublishSourceOnSkip(fe, newEl);
-                    Reconciler.RefreshGestureDragStateOnSkip(fe, oldEl.Modifiers, newEl.Modifiers);
+                    reconciler.RefreshSkippedChildState(fe, oldEl, newEl);
                 }
                 suffixLen++;
                 continue;
@@ -1064,6 +1051,17 @@ internal static class ChildReconciler
             if (elements[i].Key is not null) return true;
         }
         return false;
+    }
+
+    private static bool SameKeys(Element[] oldElements, Element[] newElements)
+    {
+        if (ReferenceEquals(oldElements, newElements)) return true;
+        if (oldElements.Length != newElements.Length) return false;
+        for (int i = 0; i < newElements.Length; i++)
+        {
+            if (!string.Equals(oldElements[i].Key, newElements[i].Key, StringComparison.Ordinal)) return false;
+        }
+        return true;
     }
 
     private static bool KeyMatch(Element a, Element b)

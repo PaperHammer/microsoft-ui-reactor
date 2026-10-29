@@ -9,6 +9,8 @@ internal static class SelfTestFixtureRegistry
 {
     public static readonly string[] AllFixtures =
     [
+        "JumpList_NativeInterop",
+        "Packaged_JumpList",
         "SourceMapReadPath_Enabled",
         "HostDiag_WindowHostIsListedAndBoundariesAreTagged",
         "HostDiag_FlagOffLeavesBoundariesUntagged",
@@ -136,6 +138,7 @@ internal static class SelfTestFixtureRegistry
         "Markdown_EntityResolution",
         "Markdown_ComplexDocument",
         "Markdown_CustomOptionsCallbacks",
+        "Markdown_CustomLinkBuilder",
         "Markdown_CustomListCallbacks",
         "Markdown_CustomBlockQuoteHtml",
         "Markdown_CustomTableImage",
@@ -368,6 +371,10 @@ internal static class SelfTestFixtureRegistry
         "ContentDialogLive_RoutesClosedToLatestRender",
         "ContentDialogLive_ReopensAfterClose",
         "Diagnostics_ContentDialogTag",
+        "ContentDialogTheme_Lifecycle",
+        "ContentDialogTheme_ExplicitOpenMatrix",
+        "ContentDialogTheme_InheritedOpenMatrix",
+        "ContentDialogTheme_SecondaryWindow",
         // Flyout placement guard — Reactor must never write FlyoutPlacementMode.Auto
         // onto a WinUI FlyoutBase, because the show-time validator rejects it and
         // fail-fasts the process. The Flyout/ContentFlyout/fresh-create fixtures
@@ -428,6 +435,12 @@ internal static class SelfTestFixtureRegistry
         "RenderErrorNames_ErrorBoundaryCatchIsReported",
         "RenderErrorNames_RenderErrorHandlerOutcomesReportOnce",
         "RenderErrorNames_BoundaryRollbackUnmountNamesComponent",
+        // Diagnostic events an out-of-process inspector relies on (DevTools logs / error badge)
+        "DiagnosticEvents_BareChildRenderErrorReportedOnce",
+        "DiagnosticEvents_CommitErrorReported",
+        "DiagnosticEvents_WindowOpenedAndClosedReported",
+        "KeyedListDiagnostics_RowsKeysAndWarnings",
+        "FlyoutItemIdentity_Published",
         "FocusTrapContentDialog_ContainmentProbe",
         // Issue #487 — RichTextBlock + inline UI inside ScrollViewer scroll anchor
         "Issue487_ScrollOffsetRestoredAfterRunMutation",
@@ -670,6 +683,9 @@ internal static class SelfTestFixtureRegistry
         "Item1Mount_OwnThemeWinsAtMount",
         "Item1Mount_PostMountAncestorToggleReResolves",
         "Item1Mount_SiblingSubtreesResolveIndependently",
+        "Item1Mount_HostInheritedThemeResolvesAtMount",
+        "Item1Mount_HostInheritedThemeReviewRegressions",
+        "Item1Mount_HostInheritedThemePooledRows",
         "HotReload_ChildHookOrderRecovery",
         "HotReload_ComponentMigratesState",
         // DSL and extension tests
@@ -768,6 +784,7 @@ internal static class SelfTestFixtureRegistry
         "InterState_ConfigImmutability",
         "InterState_NoLayoutProperties",
         "InterState_MountIntegration",
+        "InterState_HoverOutKeepsLayoutOffset",
         // Animation system — Transitions
         "Transition_TypeHierarchy",
         "Transition_Asymmetric",
@@ -798,6 +815,7 @@ internal static class SelfTestFixtureRegistry
         "AnimCombo_FadeEnter",
         "AnimCombo_InteractionSetup",
         "AnimCombo_KeyframesOnMount",
+        "AnimCombo_KeyframesTranslationChannel",
         "AnimCombo_StaggerOnContainer",
         // Animation combination tests — pairs
         "AnimCombo_AnimatePlusLayout",
@@ -1886,6 +1904,22 @@ internal static class SelfTestFixtureRegistry
         "RadioButtonWrapper_Parity",
         "StackPanelWrapper_Parity",
         "ListBoxWrapper_Parity",
+        "ItemsHost_Observable_Keyed_Lifecycle",
+        "ItemsHost_SameArray_Context",
+        "ItemsHost_NativeItems_Selection",
+        "ItemsHost_Unkeyed_Type_Pool",
+        "ItemsHost_Slot_Rooting_Defaults",
+        "ItemsHost_HandHandler_RawEquality",
+        "ItemsHost_Skipped_Click",
+        "ItemsHost_PlainEvent_Unmount",
+        "ItemsHost_Native_Reorder",
+        "ItemsHost_Combo_Reopen",
+        "ItemsHost_Expander_HeaderCleanup",
+        "ItemsHost_Expander_DescriptorHeaderCleanup",
+        "ItemsHost_SameSource_StateAndForce",
+        "ItemsHost_SameSource_ThemeCache",
+        "ItemsHost_ResourceRefresh_Descriptor",
+        "ItemsHost_ResourceRefresh_HandHandler",
         "ProgressBarValue",
 
         // Spec 047 §4.3 — EventHandlerState split (§9.2) contract fixtures.
@@ -2021,6 +2055,11 @@ internal static class SelfTestFixtureRegistry
         "CmdBarFlyout_KeyedReorderKeepsSiblingFlyouts",
         "CmdBarFlyout_TargetKeepsItsOwnCallbacks",
 
+        // Flyout IsOpen driven by state (FlyoutIsOpenStateFixtures).
+        "FlyoutIsOpen_ButtonTargetFromState",
+        "FlyoutIsOpen_ButtonTargetOnMount",
+        "FlyoutIsOpen_NonButtonTargetFromState",
+
         // The harness's own click stimulus must fail loudly (HarnessGuardFixtures, #1063).
         "HarnessGuard_ClickButtonFailsLoudly",
 
@@ -2093,6 +2132,7 @@ internal static class SelfTestFixtureRegistry
         new(StringComparer.Ordinal)
         {
             ["Packaged_IdentityGuard"] = SelfTestTier.Packaged,
+            ["Packaged_JumpList"] = SelfTestTier.Packaged,
             ["Packaged_ResourceResolution"] = SelfTestTier.Packaged,
             ["Packaged_SettingsStoreRoundTrip"] = SelfTestTier.Packaged,
             ["Packaged_WindowIconFromResource"] = SelfTestTier.Packaged,
@@ -2178,6 +2218,8 @@ internal static class SelfTestFixtureRegistry
 
     public static SelfTestFixtureBase? Create(string name, Harness harness) => name switch
     {
+        "JumpList_NativeInterop" => new JumpListNativeInteropFixture(harness),
+        "Packaged_JumpList" => new PackagedJumpListFixture(harness),
         "HarnessGuard_ClickButtonFailsLoudly" => new HarnessGuardFixtures.ClickButtonFailsLoudly(harness),
         "ErrorBoundary_CatchesRenderError" => new ErrorBoundaryFixtures.CatchesRenderError(harness),
         "ErrorBoundary_Recovery" => new ErrorBoundaryFixtures.Recovery(harness),
@@ -2286,6 +2328,7 @@ internal static class SelfTestFixtureRegistry
         "Markdown_EntityResolution" => new MarkdownFixtures.EntityResolution(harness),
         "Markdown_ComplexDocument" => new MarkdownFixtures.ComplexDocument(harness),
         "Markdown_CustomOptionsCallbacks" => new MarkdownFixtures.CustomOptionsCallbacks(harness),
+        "Markdown_CustomLinkBuilder" => new MarkdownFixtures.CustomLinkBuilder(harness),
         "Markdown_CustomListCallbacks" => new MarkdownFixtures.CustomListCallbacks(harness),
         "Markdown_CustomBlockQuoteHtml" => new MarkdownFixtures.CustomBlockQuoteHtml(harness),
         "Markdown_CustomTableImage" => new MarkdownFixtures.CustomTableImage(harness),
@@ -2503,6 +2546,10 @@ internal static class SelfTestFixtureRegistry
         "ContentDialogLive_RoutesClosedToLatestRender" => new ContentDialogLiveContentFixtures.ContentDialog_RoutesClosedToLatestRender(harness),
         "ContentDialogLive_ReopensAfterClose" => new ContentDialogLiveContentFixtures.ContentDialog_ReopensAfterClose(harness),
         "Diagnostics_ContentDialogTag" => new ContentDialogTagFixtures.DialogIsTagged(harness),
+        "ContentDialogTheme_Lifecycle" => new ContentDialogThemeFixture(harness),
+        "ContentDialogTheme_ExplicitOpenMatrix" => new ContentDialogThemeOpenMatrixFixture(harness, explicitTheme: true),
+        "ContentDialogTheme_InheritedOpenMatrix" => new ContentDialogThemeOpenMatrixFixture(harness, explicitTheme: false),
+        "ContentDialogTheme_SecondaryWindow" => new ContentDialogThemeSecondaryWindowFixture(harness),
         // Flyout placement guard — Auto must never reach FlyoutBase.Placement.
         "FlyoutPlacement_Platform_FlyoutBase_PlacementDefault" => new FlyoutPlacementFixtures.Platform_FlyoutBase_PlacementDefault(harness),
         "FlyoutPlacement_Flyout_DefaultPlacement_Opens" => new FlyoutPlacementFixtures.Flyout_DefaultPlacement_Opens(harness),
@@ -2554,6 +2601,11 @@ internal static class SelfTestFixtureRegistry
         "RenderErrorNames_ErrorBoundaryCatchIsReported" => new RenderErrorNames_ErrorBoundaryCatchIsReported(harness),
         "RenderErrorNames_RenderErrorHandlerOutcomesReportOnce" => new RenderErrorNames_RenderErrorHandlerOutcomesReportOnce(harness),
         "RenderErrorNames_BoundaryRollbackUnmountNamesComponent" => new RenderErrorNames_BoundaryRollbackUnmountNamesComponent(harness),
+        "DiagnosticEvents_BareChildRenderErrorReportedOnce" => new DiagnosticEventsFixtures.BareChildRenderErrorReportedOnce(harness),
+        "DiagnosticEvents_CommitErrorReported" => new DiagnosticEventsFixtures.CommitErrorReported(harness),
+        "DiagnosticEvents_WindowOpenedAndClosedReported" => new DiagnosticEventsFixtures.WindowOpenedAndClosedReported(harness),
+        "KeyedListDiagnostics_RowsKeysAndWarnings" => new KeyedListDiagnostics_RowsKeysAndWarnings(harness),
+        "FlyoutItemIdentity_Published" => new FlyoutItemIdentity_Published(harness),
         "FocusTrapContentDialog_ContainmentProbe" => new FocusTrapContentDialog_ContainmentProbe(harness),
         "Issue487_ScrollOffsetRestoredAfterRunMutation" => new Issue487ScrollAnchorFixtures.Issue487_ScrollOffsetRestoredAfterRunMutation(harness),
         "Issue487_RepeatedMutationDoesNotDrift" => new Issue487ScrollAnchorFixtures.Issue487_RepeatedMutationDoesNotDrift(harness),
@@ -2781,6 +2833,9 @@ internal static class SelfTestFixtureRegistry
         "Item1Mount_OwnThemeWinsAtMount" => new ResourceOverrideMountThemeFixtures.OwnThemeWinsAtMount(harness),
         "Item1Mount_PostMountAncestorToggleReResolves" => new ResourceOverrideMountThemeFixtures.PostMountAncestorToggleReResolves(harness),
         "Item1Mount_SiblingSubtreesResolveIndependently" => new ResourceOverrideMountThemeFixtures.SiblingSubtreesResolveIndependently(harness),
+        "Item1Mount_HostInheritedThemeResolvesAtMount" => new ResourceOverrideMountThemeFixtures.HostInheritedThemeResolvesAtMount(harness),
+        "Item1Mount_HostInheritedThemeReviewRegressions" => new ResourceOverrideMountThemeFixtures.HostInheritedThemeReviewRegressions(harness),
+        "Item1Mount_HostInheritedThemePooledRows" => new ResourceOverrideMountThemeFixtures.HostInheritedThemePooledRows(harness),
         "HotReload_ChildHookOrderRecovery" => new HotReloadRecoveryFixtures.ChildRecoversAndSiblingStateSurvives(harness),
         "HotReload_ComponentMigratesState" => new HotReloadComponentMigrationFixtures.MigratesPreservingState(harness),
         // DSL and extension tests
@@ -2896,6 +2951,7 @@ internal static class SelfTestFixtureRegistry
         "InterState_ConfigImmutability" => new InteractionStatesTests.ConfigImmutability(harness),
         "InterState_NoLayoutProperties" => new InteractionStatesTests.NoLayoutProperties(harness),
         "InterState_MountIntegration" => new InteractionStatesTests.MountIntegration(harness),
+        "InterState_HoverOutKeepsLayoutOffset" => new InteractionStatesTests.HoverOutKeepsLayoutOffset(harness),
         // Animation system — Transitions
         "Transition_TypeHierarchy" => new TransitionTests.TypeHierarchy(harness),
         "Transition_Asymmetric" => new TransitionTests.AsymmetricTransition(harness),
@@ -2926,6 +2982,7 @@ internal static class SelfTestFixtureRegistry
         "AnimCombo_FadeEnter" => new AnimationCombinationTests.TransitionFadeEnter(harness),
         "AnimCombo_InteractionSetup" => new AnimationCombinationTests.InteractionStatesSetup(harness),
         "AnimCombo_KeyframesOnMount" => new AnimationCombinationTests.KeyframesOnMount(harness),
+        "AnimCombo_KeyframesTranslationChannel" => new AnimationCombinationTests.KeyframesTranslationChannel(harness),
         "AnimCombo_StaggerOnContainer" => new AnimationCombinationTests.StaggerOnContainer(harness),
         // Animation combination tests — pairs
         "AnimCombo_AnimatePlusLayout" => new AnimationCombinationTests.AnimatePlusLayout(harness),
@@ -3989,6 +4046,22 @@ internal static class SelfTestFixtureRegistry
         "RadioButtonWrapper_Parity" => new RadioButtonWrapperParityFixture.Execution(harness),
         "StackPanelWrapper_Parity" => new StackPanelWrapperParityFixture.Execution(harness),
         "ListBoxWrapper_Parity" => new ListBoxWrapperParityFixture.Execution(harness),
+        "ItemsHost_Observable_Keyed_Lifecycle" => new ItemsHostReconciliationFixture.Execution(harness),
+        "ItemsHost_SameArray_Context" => new ItemsHostEdgeCasesFixtures.SameArrayContext(harness),
+        "ItemsHost_NativeItems_Selection" => new ItemsHostEdgeCasesFixtures.NativeItemsAndSelection(harness),
+        "ItemsHost_Unkeyed_Type_Pool" => new ItemsHostEdgeCasesFixtures.UnkeyedTypeAndPool(harness),
+        "ItemsHost_Slot_Rooting_Defaults" => new ItemsHostEdgeCasesFixtures.SlotRootingAndDefaults(harness),
+        "ItemsHost_HandHandler_RawEquality" => new ItemsHostEdgeCasesFixtures.HandHandlerAndRawEquality(harness),
+        "ItemsHost_Skipped_Click" => new ItemsHostReviewFixtures.SkippedClick(harness),
+        "ItemsHost_PlainEvent_Unmount" => new ItemsHostReviewFixtures.PlainEventUnmount(harness),
+        "ItemsHost_Native_Reorder" => new ItemsHostReviewFixtures.NativeReorder(harness),
+        "ItemsHost_Combo_Reopen" => new ItemsHostReviewFixtures.ComboReopen(harness),
+        "ItemsHost_Expander_HeaderCleanup" => new ItemsHostReviewFixtures.ExpanderHeaderCleanup(harness),
+        "ItemsHost_Expander_DescriptorHeaderCleanup" => new ItemsHostReviewFixtures.ExpanderHeaderCleanup(harness, useDescriptor: true),
+        "ItemsHost_SameSource_StateAndForce" => new ItemsHostSameSourceFixtures.StateAndForce(harness),
+        "ItemsHost_SameSource_ThemeCache" => new ItemsHostSameSourceFixtures.ThemeCache(harness),
+        "ItemsHost_ResourceRefresh_Descriptor" => new ItemsHostEdgeCasesFixtures.ResourceRefresh(harness, handCoded: false),
+        "ItemsHost_ResourceRefresh_HandHandler" => new ItemsHostEdgeCasesFixtures.ResourceRefresh(harness, handCoded: true),
         "ProgressBarValue" => new ProgressBarValueFixture.Execution(harness),
 
         // Spec 047 §4.3 — EventHandlerState split (§9.2) contract fixtures.
@@ -4108,13 +4181,16 @@ internal static class SelfTestFixtureRegistry
         "CmdBarFlyout_KeyedReorderKeepsSiblingFlyouts" => new CommandBarFlyoutWiringFixtures.KeyedReorderKeepsSiblingFlyouts(harness),
         "CmdBarFlyout_TargetKeepsItsOwnCallbacks" => new CommandBarFlyoutWiringFixtures.TargetKeepsItsOwnCallbacks(harness),
 
+        "FlyoutIsOpen_ButtonTargetFromState" => new FlyoutIsOpenStateFixtures.ButtonTargetOpensFromState(harness),
+        "FlyoutIsOpen_ButtonTargetOnMount" => new FlyoutIsOpenStateFixtures.ButtonTargetOpensOnMount(harness),
+        "FlyoutIsOpen_NonButtonTargetFromState" => new FlyoutIsOpenStateFixtures.NonButtonTargetOpensFromState(harness),
+
         SkipVerdictPositiveControl.FixtureName => new SkipVerdictPositiveControl(harness),
         TierDeclarationConsistencyFixture.FixtureName => new TierDeclarationConsistencyFixture(harness),
 
         _ => null,
     };
 }
-
 
 
 

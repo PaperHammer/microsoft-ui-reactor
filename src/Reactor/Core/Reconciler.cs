@@ -104,6 +104,93 @@ public sealed partial class Reconciler : IDisposable
     // carries the reconciler's top-down knowledge so ThemeRef-backed ResourceOverrides
     // resolve their concrete brush against the correct effective theme at mount.
     private ElementTheme _ambientRequestedTheme = ElementTheme.Default;
+
+    /// <summary>
+    /// Native parent of the host's content, also used when installing error fallbacks.
+    /// </summary>
+    internal DependencyObject? ThemeAnchor { get; set; }
+    private ElementTheme _renderedHostTheme;
+    private ElementTheme _realizationTheme;
+    private int _realizationThemeDepth;
+    private bool _realizationResourceRefresh;
+    internal bool HostThemeChanged => InheritedRequestedTheme(ThemeAnchor) != _renderedHostTheme;
+
+    /// <summary>
+    /// The nearest explicit <c>RequestedTheme</c> on <paramref name="start"/> or its visual
+    /// ancestors, or Default. Covers themes set by Reactor on realized controls and themes
+    /// an app sets outside the Reactor tree (for example on a window root).
+    /// </summary>
+    internal static ElementTheme InheritedRequestedTheme(DependencyObject? start)
+    {
+        for (var node = start; node is not null; node = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(node))
+        {
+            if (node is FrameworkElement { RequestedTheme: not ElementTheme.Default } themed)
+                return themed.RequestedTheme;
+        }
+        return ElementTheme.Default;
+    }
+
+    /// <summary>
+    /// Layout-time realization (an ItemsRepeater or ItemsView asking for a row) runs outside
+    /// any root pass, so no ambient theme is threaded to the row. Seed it from the parented
+    /// realization target so ThemeRef resource overrides on the still-unparented row resolve
+    /// against the theme it will render under. A realization nested in a pass keeps the
+    /// pass's ambient.
+    /// </summary>
+    internal RealizationThemeScope EnterRealizationTheme(DependencyObject? realizationParent, UIElement? reused = null)
+    {
+        var inherited = _debugReconcileDepth > 0
+            ? _ambientRequestedTheme : InheritedRequestedTheme(realizationParent);
+        bool refresh = reused is FrameworkElement reusedElement && TryGetReactorState(reusedElement, out var state)
+            && state.RealizationTheme is { } previous && previous != inherited;
+        var scope = new RealizationThemeScope(this, inherited);
+        _realizationThemeDepth++;
+        _realizationTheme = inherited;
+        _ambientRequestedTheme = inherited;
+        // A parked row missed the host refresh. Its unchanged children must not skip.
+        if (refresh)
+        {
+            _realizationResourceRefresh = true;
+            _resourceRefreshActive = true;
+            _forceFullRenderActive = true;
+        }
+        return scope;
+    }
+
+    internal readonly struct RealizationThemeScope : IDisposable
+    {
+        private readonly Reconciler? _owner;
+        private readonly ElementTheme _realization;
+        private readonly ElementTheme _ambient;
+        private readonly bool _realizationRefresh;
+        private readonly bool _refreshActive;
+        private readonly bool _forceActive;
+        internal ElementTheme Theme { get; }
+
+        internal RealizationThemeScope(Reconciler owner, ElementTheme theme)
+        {
+            _owner = owner;
+            Theme = theme;
+            _realization = owner._realizationTheme;
+            _ambient = owner._ambientRequestedTheme;
+            _realizationRefresh = owner._realizationResourceRefresh;
+            _refreshActive = owner._resourceRefreshActive;
+            _forceActive = owner._forceFullRenderActive;
+        }
+
+        public void Dispose()
+        {
+            if (_owner is null)
+                return;
+            _owner._realizationThemeDepth--;
+            _owner._realizationTheme = _realization;
+            _owner._ambientRequestedTheme = _ambient;
+            _owner._realizationResourceRefresh = _realizationRefresh;
+            _owner._resourceRefreshActive = _refreshActive;
+            _owner._forceFullRenderActive = _forceActive;
+        }
+    }
+
     private int _errorBoundaryDepth;
 
     /// <summary>
@@ -509,6 +596,58 @@ public sealed partial class Reconciler : IDisposable
     /// </summary>
     private string? CurrentDiagnosticOwner => _diagOwner ?? DiagnosticRootOwner;
 
+    /// <summary>
+    /// The component whose render output is being reconciled, for diagnostics that name it
+    /// (keyed-list warnings, menu / command-bar item identity).
+    /// Known only while sources are published (an inspector is attached); <c>null</c> otherwise.
+    /// </summary>
+    internal string? DiagnosticComponent =>
+        global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
+            ? CurrentDiagnosticOwner
+            : null;
+
+    /// <summary>The component and C# call site a keyed-list diagnostic for <paramref name="list"/> names.</summary>
+    internal Internal.KeyedListAttribution KeyedListAttributionFor(Element? list)
+        => new(DiagnosticComponent, Internal.KeyedListAttribution.CallSiteOf(list));
+
+    /// <summary>
+    /// Builds the row view at <paramref name="index"/> of a templated list (<c>ListView&lt;T&gt;</c>,
+    /// <c>GridView&lt;T&gt;</c>, <c>FlipView&lt;T&gt;</c>) and stamps the item's <c>KeySelector</c>
+    /// key onto it, as <c>VirtualList</c> / <c>LazyVStack</c> rows already are (issue #326), so
+    /// the realized row carries its key for diagnostics (<c>key=</c> in its published
+    /// <c>ReactorSource</c>, <see cref="Element.Key"/> on its element tag). A ListView / GridView
+    /// container follows its item through the keyed collection diff, so the stamped key matches
+    /// across updates. An author's own <c>.WithKey(...)</c> on the row wins.
+    /// </summary>
+    internal static Element BuildKeyedItemView(Internal.IItemViewSource source, int index)
+        => WithItemKey(source.BuildItemView(index), source, index);
+
+    /// <summary>
+    /// <paramref name="built"/> (the row view at <paramref name="index"/>) with the item's
+    /// <c>KeySelector</c> key, unless the author keyed it already. See <see cref="BuildKeyedItemView"/>.
+    /// </summary>
+    internal static Element WithItemKey(Element built, Internal.IItemViewSource source, int index)
+    {
+        if (built.Key is not null || source is not Internal.IKeyedItemSource keyed) return built;
+        // A legacy ModifiedElement mounts (and tags) its inner element: an author's key there wins.
+        if (built is ModifiedElement && InnermostOf(built).Key is not null) return built;
+        var key = source is TemplatedListElementBase templated ? templated.GetItemIdentityKey(index) : keyed.GetKeyAt(index);
+        return key is not null ? WithKeyThrough(built, key) : built;
+    }
+
+    private static Element InnermostOf(Element element)
+    {
+        while (element is ModifiedElement modified) element = modified.Inner;
+        return element;
+    }
+
+    // The key on the element the parent diffs (the outermost) and on the one Mount tags and
+    // publishes (the innermost of a ModifiedElement chain).
+    private static Element WithKeyThrough(Element element, string key)
+        => element is ModifiedElement modified
+            ? modified with { Key = key, Inner = WithKeyThrough(modified.Inner, key) }
+            : element with { Key = key };
+
     private void PublishSource(UIElement control, Element element)
     {
         var kind = element;
@@ -560,6 +699,87 @@ public sealed partial class Reconciler : IDisposable
     /// The skip happens inside its parent's reconcile, under the same owner as an update.
     /// </summary>
     internal void PublishSourceOnSkip(UIElement control, Element newEl) => PublishSource(control, newEl);
+
+    /// <summary>
+    /// The key a templated-list item's realized element carries: the stamped item key, or an
+    /// author's own key on a wrapped (<see cref="ModifiedElement"/>) inner element, which
+    /// <see cref="WithItemKey"/> leaves in place.
+    /// </summary>
+    internal static string? ItemKeyOf(Element itemElement) => itemElement.Key ?? InnermostOf(itemElement).Key;
+
+    /// <summary>
+    /// After a templated-list item view was mounted or updated into <paramref name="control"/>:
+    /// makes the control's identity (tag and, in diagnostics mode, published value) carry the
+    /// item's key when it does not. A forwarding <c>RegisterType</c> row keeps its child's tag,
+    /// which the item key never reached, and an update the reconciler skipped (a different item
+    /// with identical content) may refresh the tag without republishing — so
+    /// <paramref name="priorKey"/>, the key the control showed before the update, forces a
+    /// refresh whenever the item key changed.
+    /// </summary>
+    internal void EnsureItemIdentity(UIElement? control, Element itemElement, string? priorKey = null, bool updated = false)
+    {
+        if (control is not FrameworkElement fe) return;
+        var key = ItemKeyOf(itemElement);
+        if (key is null && !updated) return;
+        if (!string.Equals(GetElementTag(fe)?.Key, key, StringComparison.Ordinal)
+            || (updated && !string.Equals(priorKey, key, StringComparison.Ordinal))
+            || (PublishesItemIdentity && fe.GetValue(Diagnostics.ReactorDiagnostics.SourceProperty) is string published
+                && !Diagnostics.ReactorSourcePublisher.HasKey(published, key)))
+            RefreshItemIdentityOnSkip(fe, itemElement);
+    }
+
+    private static bool PublishesItemIdentity
+        => global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled;
+
+    /// <summary>
+    /// Publishes <paramref name="element"/> with the item <paramref name="key"/>, unless the
+    /// control's value describes another element: a forwarding <c>RegisterType</c> row's child,
+    /// which in Native AOT tag-skip mode is untagged (so the outer element holds the tag) while
+    /// its value is still its own. That value is re-keyed in place, keeping the child's kind and
+    /// call site.
+    /// </summary>
+    private void PublishItemIdentity(FrameworkElement control, Element element, string? key)
+    {
+        if (control.GetValue(Diagnostics.ReactorDiagnostics.SourceProperty) is string current
+            && ForwardsAnotherElement(control, element))
+        {
+            var rekeyed = Diagnostics.ReactorSourcePublisher.WithKey(current, key);
+            if (!string.Equals(rekeyed, current, StringComparison.Ordinal))
+                control.SetValue(Diagnostics.ReactorDiagnostics.SourceProperty, rekeyed);
+            return;
+        }
+        PublishSource(control, element);
+    }
+
+    /// <summary>
+    /// Refreshes a reused control's identity — element tag and, in diagnostics mode, its
+    /// published value — to the item key of <paramref name="newEl"/> (see <see cref="ItemKeyOf"/>).
+    /// </summary>
+    internal void RefreshItemIdentityOnSkip(FrameworkElement control, Element newEl)
+    {
+        var kind = InnermostOf(newEl);
+        var key = ItemKeyOf(newEl);
+        bool publish = PublishesItemIdentity;
+        // The control can realize an element other than the item's: a keyed Memo's factory
+        // output, or the child a forwarding RegisterType callback handed back (whose tag
+        // TypeRegistration.TagControl keeps). The control's trampolines and unmount read that
+        // element, so re-key it and describe it; the item element never replaces it.
+        if (TryGetReactorState(control, out var state) && state.Element is { } realized
+            && (kind is KeyedMemoElement || realized.GetType() != kind.GetType()))
+        {
+            if (!string.Equals(realized.Key, key, StringComparison.Ordinal))
+                state.Element = realized = realized with { Key = key };
+            if (publish) PublishItemIdentity(control, realized, key);
+            return;
+        }
+        // An untagged keyed Memo output has nothing to re-key, and its wrapper is never the tag.
+        if (kind is KeyedMemoElement) return;
+        // A legacy ModifiedElement mounts (and tags) its inner element, so that element is
+        // re-tagged with the item key.
+        var target = string.Equals(kind.Key, key, StringComparison.Ordinal) ? kind : kind with { Key = key };
+        SetElementTagIfNeeded(control, target);
+        if (publish) PublishItemIdentity(control, target, key);
+    }
 
     /// <summary>
     /// ItemsRepeater adoption (<c>TryAdoptRealizedReplacement</c>) moves a fresh component
@@ -679,8 +899,8 @@ public sealed partial class Reconciler : IDisposable
     /// Root-owned controls whose call site, key and kind did not change were not re-published,
     /// so they still name the previous root. Rewrites <c>owner=</c> on the content's root-owned
     /// controls: the visual tree plus the Reactor subtrees hung off it outside the visual tree
-    /// (flyout content and pass-through element, popup child, a showing dialog's content,
-    /// cached navigation pages). A component wrapper (<c>mounts=</c>) is renamed if the root
+    /// (flyout content and pass-through element, menu and command items, popup child, a
+    /// showing dialog's content, cached navigation pages). A component wrapper (<c>mounts=</c>) is renamed if the root
     /// owns it, but not entered: its subtree is owned by that component. Rare (only on a root
     /// swap), so a walk.
     /// </summary>
@@ -704,6 +924,19 @@ public sealed partial class Reconciler : IDisposable
         {
             if (d is not null && seen.Add(d)) pending.Push(d);
         }
+        void PushCommandItems(WinPrim.FlyoutBase? flyoutBase)
+        {
+            switch (flyoutBase)
+            {
+                case WinUI.MenuFlyout menu:
+                    foreach (var item in menu.Items) Push(item);
+                    break;
+                case WinUI.CommandBarFlyout commandFlyout:
+                    foreach (var command in commandFlyout.PrimaryCommands) Push(command as DependencyObject);
+                    foreach (var command in commandFlyout.SecondaryCommands) Push(command as DependencyObject);
+                    break;
+            }
+        }
 
         Push(root);
         while (pending.Count > 0)
@@ -723,7 +956,8 @@ public sealed partial class Reconciler : IDisposable
             // owner's.
             if (node is FrameworkElement fe)
             {
-                if (GetFlyoutOnControl(fe) is WinUI.Flyout flyout)
+                var onControl = GetFlyoutOnControl(fe);
+                if (onControl is WinUI.Flyout flyout)
                 {
                     Push(flyout.Content);
                     Push(flyout.OverlayInputPassThroughElement);
@@ -731,9 +965,34 @@ public sealed partial class Reconciler : IDisposable
                 // .WithContextFlyout / .AttachedFlyout / .ToolTip modifiers hang Reactor content
                 // off the control too, outside every child walk until opened.
                 if (fe.ContextFlyout is WinUI.Flyout contextFlyout) Push(contextFlyout.Content);
-                if (WinPrim.FlyoutBase.GetAttachedFlyout(fe) is WinUI.Flyout attachedFlyout) Push(attachedFlyout.Content);
+                var attached = WinPrim.FlyoutBase.GetAttachedFlyout(fe);
+                if (attached is WinUI.Flyout attachedFlyout) Push(attachedFlyout.Content);
                 Push(WinUI.ToolTipService.GetToolTip(fe) as UIElement);
                 Push(V1Protocol.OverlayLifecycle.PeekLiveContentDialog(fe));
+                // Menu and command items carry their own published values, and a closed menu's
+                // items (a flyout's, a submenu's, a menu-bar menu's) are in no visual or logical
+                // child walk.
+                PushCommandItems(onControl);
+                PushCommandItems(fe.ContextFlyout);
+                PushCommandItems(attached);
+                switch (fe)
+                {
+                    case WinUI.MenuFlyoutSubItem subItem:
+                        foreach (var item in subItem.Items) Push(item);
+                        break;
+                    case WinUI.MenuBarItem menuBarItem:
+                        foreach (var item in menuBarItem.Items) Push(item);
+                        break;
+                    // A bar whose template is not applied yet (collapsed, never shown) has its
+                    // items in no visual child walk.
+                    case WinUI.MenuBar menuBar:
+                        foreach (var item in menuBar.Items) Push(item);
+                        break;
+                    case WinUI.CommandBar commandBar:
+                        foreach (var command in commandBar.PrimaryCommands) Push(command as DependencyObject);
+                        foreach (var command in commandBar.SecondaryCommands) Push(command as DependencyObject);
+                        break;
+                }
             }
             // A component wrapper's subtree is that component's. An embedded ReactorHostControl
             // is another host, even when it is this root's own content (XamlHost(() => island)):
@@ -820,14 +1079,20 @@ public sealed partial class Reconciler : IDisposable
     /// placeholder's published <c>owner=</c> is the owner its body was declared under, so it is
     /// restored for the mount. Nested components still scope their own subtrees.
     /// </summary>
-    internal UIElement? MountDialogContent(FrameworkElement placeholder, Element content, Action requestRerender)
+    internal UIElement? MountDialogContent(FrameworkElement placeholder, Element content, Action requestRerender, ElementTheme theme)
     {
-        if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
-            && CurrentDiagnosticOwner is null
-            && placeholder.GetValue(Diagnostics.ReactorDiagnostics.SourceProperty) is string published
-            && Diagnostics.ReactorSourcePublisher.Owner(published) is { } owner)
-            return MountUnderOwner(content, requestRerender, owner);
-        return Mount(content, requestRerender);
+        var previousTheme = _ambientRequestedTheme;
+        _ambientRequestedTheme = theme;
+        try
+        {
+            if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported && Diagnostics.ReactorSourcePublisher.IsEnabled
+                && CurrentDiagnosticOwner is null
+                && placeholder.GetValue(Diagnostics.ReactorDiagnostics.SourceProperty) is string published
+                && Diagnostics.ReactorSourcePublisher.Owner(published) is { } owner)
+                return MountUnderOwner(content, requestRerender, owner);
+            return Mount(content, requestRerender);
+        }
+        finally { _ambientRequestedTheme = previousTheme; }
     }
 
     private UIElement? MountUnderOwner(Element element, Action requestRerender, string owner)
@@ -889,7 +1154,11 @@ public sealed partial class Reconciler : IDisposable
     /// realizing or refreshing a row) don't call it, so they can't consume the request.
     /// UI thread only; pair with <see cref="EndRootPass"/> in a finally.
     /// </summary>
-    internal void BeginRootPass() => _resourceRefreshArmed |= Interlocked.Exchange(ref _resourceRefreshPending, 0) != 0;
+    internal void BeginRootPass()
+    {
+        var pending = Interlocked.Exchange(ref _resourceRefreshPending, 0) != 0;
+        _resourceRefreshArmed |= pending || HostThemeChanged;
+    }
 
     /// <summary>
     /// Ends a host root pass. A request <see cref="BeginRootPass"/> armed that the pass never
@@ -1224,6 +1493,7 @@ public sealed partial class Reconciler : IDisposable
     internal sealed class ReactorState
     {
         public Element? Element;
+        internal ElementTheme? RealizationTheme;
         public ModifierEventHandlerState? Modifiers;
         // Per-native-element echo-suppress counter consumed by ChangeEchoSuppressor.
         // Lives here (not in a CWT-by-RCW) so that BeginSuppress on one managed
@@ -1289,6 +1559,8 @@ public sealed partial class Reconciler : IDisposable
         // ops translate into container-level animations rather than full
         // re-realization.
         public Internal.ReactorListState? ListState;
+        // Flat item state shares the native control's existing attached state.
+        public V1Protocol.ItemsHostState? ItemsHostState;
 
         // Spec 047 §14 Phase 3 close-out — descriptor-side per-index view
         // source. Populated by Reconciler.BindKeyedItemsSource when a
@@ -1343,13 +1615,6 @@ public sealed partial class Reconciler : IDisposable
         public List<(Element Element, bool HasControl)>? MountedItemElements;
 
         /// <summary>
-        /// For an <c>ItemsHost</c> control: the collection entry each logical item realized
-        /// (-1 when it mounted nothing), recorded when the items are filled, so a resource
-        /// refresh can reconcile kept items in place (<c>ItemsHost.RefreshKeptItems</c>).
-        /// </summary>
-        public int[]? ItemsHostEntries;
-
-        /// <summary>
         /// <c>componentId</c> (<c>ReactorEventSource.ComponentRendered</c>) of the component
         /// whose wrapper this control is; 0 when none. Backs
         /// <c>ReactorTrace.TryGetComponentId</c>. Stored here rather than in a
@@ -1371,7 +1636,7 @@ public sealed partial class Reconciler : IDisposable
                 new PropertyMetadata(null));
     }
 
-    internal static ReactorState GetOrCreateReactorState(FrameworkElement fe)
+    internal static ReactorState GetOrCreateReactorState(UIElement fe)
     {
         if (fe.GetValue(ReactorAttached.StateProperty) is ReactorState state)
             return state;
@@ -1432,6 +1697,19 @@ public sealed partial class Reconciler : IDisposable
         if (element is null) return; // nothing to store
         state = new ReactorState { Element = element };
         control.SetValue(ReactorAttached.StateProperty, state);
+    }
+
+    internal void RefreshSkippedChildState(FrameworkElement control, Element oldElement, Element newElement)
+    {
+        if (newElement.HasCallbacks)
+            SetElementTag(control, newElement);
+        else if (CallSiteChangedOnSkip(oldElement, newElement))
+            RefreshCallSiteTagOnSkip(control, newElement);
+        if (global::Microsoft.UI.Reactor.Hosting.ReactorFeatures.DevtoolsSupported
+            && Diagnostics.ReactorSourcePublisher.IsEnabled
+            && CallSiteChangedOnSkip(oldElement, newElement))
+            PublishSourceOnSkip(control, newElement);
+        RefreshGestureDragStateOnSkip(control, oldElement.Modifiers, newElement.Modifiers);
     }
 
     /// <summary>
@@ -1740,9 +2018,9 @@ public sealed partial class Reconciler : IDisposable
     }
 
     /// <summary>
-    /// Drops the item records on a control (a FlipView's mounted items, an ItemsHost's entries).
-    /// They describe one mount, so a control leaving the tree, to the pool or for good, must not
-    /// keep them.
+    /// Drops non-owning item refresh snapshots when a control leaves the tree.
+    /// ItemsHostState also owns child teardown, so ItemsHostReconciliation.Unbind
+    /// clears it after reaching those children, not in this pre-unmount helper.
     /// </summary>
     internal static void ClearRefreshSnapshots(FrameworkElement fe)
     {
@@ -1753,7 +2031,6 @@ public sealed partial class Reconciler : IDisposable
     internal static void ClearRefreshSnapshots(ReactorState state)
     {
         state.MountedItemElements = null;
-        state.ItemsHostEntries = null;
     }
 
     /// <summary>
@@ -2678,12 +2955,18 @@ public sealed partial class Reconciler : IDisposable
             // Consume the hot-reload and resource-refresh signals exactly once per
             // top-level pass so every component re-runs Render() even when props/deps
             // are unchanged (and, for a resource refresh, no element is skipped).
-            _resourceRefreshActive = _resourceRefreshArmed;
-            _resourceRefreshArmed = false;
+            bool hostPass = _realizationThemeDepth == 0;
+            var theme = hostPass ? InheritedRequestedTheme(ThemeAnchor) : _realizationTheme;
+            _resourceRefreshActive = hostPass
+                ? _resourceRefreshArmed || theme != _renderedHostTheme
+                : _realizationResourceRefresh;
+            if (hostPass)
+                _resourceRefreshArmed = false;
             _forceFullRenderActive = ForceFullRenderPending || _resourceRefreshActive;
             ForceFullRenderPending = false;
             _hotReloadRetryActive = HotReloadRetryPending;
             HotReloadRetryPending = false;
+            _ambientRequestedTheme = theme;
 
             // Build the dirty-ancestor path. For every component node
             // whose SelfTriggered is true, walk up the realized visual
@@ -2696,17 +2979,20 @@ public sealed partial class Reconciler : IDisposable
         try {
         try
         {
+            UIElement? result;
             if (newElement is null or EmptyElement)
             {
                 if (existingControl is not null)
                     Unmount(existingControl);
-                return null;
+                result = null;
             }
-
-            if (oldElement is null or EmptyElement || existingControl is null)
-                return Mount(newElement, requestRerender);
-
-            return ReconcileImperative(oldElement, newElement, existingControl, requestRerender);
+            else if (oldElement is null or EmptyElement || existingControl is null)
+                result = Mount(newElement, requestRerender);
+            else
+                result = ReconcileImperative(oldElement, newElement, existingControl, requestRerender);
+            if (_debugReconcileDepth == 1 && _realizationThemeDepth == 0)
+                _renderedHostTheme = _ambientRequestedTheme;
+            return result;
             // </snippet:reconciler-entry>
         }
         finally
@@ -2731,6 +3017,7 @@ public sealed partial class Reconciler : IDisposable
                 _forceFullRenderActive = false;
                 _resourceRefreshActive = false;
                 _hotReloadRetryActive = false;
+                _ambientRequestedTheme = ElementTheme.Default;
                 _dirtyAncestorPath?.Clear();
                 _dirtyPathChildren?.Clear();
             }
@@ -2837,6 +3124,32 @@ public sealed partial class Reconciler : IDisposable
                 Diagnostics.ReactorEventSource.Keywords.Errors))
         {
             Diagnostics.ReactorEventSource.Log.RenderError(componentName, ex.GetType().Name, string.Empty);
+        }
+    }
+
+    /// <summary>
+    /// <c>ReactorEventSource.CommitError</c> for a host-level failure outside any component's
+    /// render or effects (<paramref name="phase"/> is <see cref="RenderErrorSource.Reconcile"/>
+    /// or <see cref="RenderErrorSource.Cleanup"/>) that replaced the host's content with the
+    /// error fallback. Names the host's root (<c>FuncElement</c> for a render-function root)
+    /// and the exception type only — the message is never read, as for
+    /// <see cref="EmitRenderError"/>.
+    /// </summary>
+    internal static void EmitCommitError(RenderErrorSource phase, Component? root, Exception ex)
+    {
+        if (Diagnostics.ReactorEventSource.Log.IsEnabled(
+                global::System.Diagnostics.Tracing.EventLevel.Error,
+                Diagnostics.ReactorEventSource.Keywords.Errors))
+        {
+            Diagnostics.ReactorEventSource.Log.CommitError(
+                phase switch
+                {
+                    RenderErrorSource.Reconcile => nameof(RenderErrorSource.Reconcile),
+                    RenderErrorSource.Cleanup => nameof(RenderErrorSource.Cleanup),
+                    _ => phase.ToString(),
+                },
+                root is not null ? Diagnostics.ComponentNames.For(root, element: null) : nameof(FuncElement),
+                ex.GetType().Name);
         }
     }
 
@@ -4880,6 +5193,13 @@ public sealed partial class Reconciler : IDisposable
     // Test-only accessor (InternalsVisibleTo Reactor.AppTests.Host).
     internal static int InteractionTrackerCountForTests => _interactionTrackers.Count;
 
+    // Test-only: drives a hover-in / hover-out transition without synthesizing pointer input.
+    internal static void SimulatePointerOverForTests(UIElement uie, bool isOver)
+    {
+        if (_interactionTrackers.TryGetValue(uie, out var tracker))
+            TransitionToState(uie, tracker, isOver ? InteractionState.PointerOver : InteractionState.Normal);
+    }
+
     private sealed class InteractionStateTracker
     {
         public InteractionState CurrentState;
@@ -5036,9 +5356,12 @@ public sealed partial class Reconciler : IDisposable
 
         if (values?.Translation.HasValue == true || newState == InteractionState.Normal)
         {
+            // Animate Translation, not Offset: on a XAML element's handoff visual, Offset is the
+            // layout position, so animating it to zero pulls the element to its parent's origin.
+            ElementCompositionPreview.SetIsTranslationEnabled(uie, true);
             var targetTranslation = values?.Translation ?? Vector3.Zero;
             var translationAnim = AnimationHelper.CreateVector3TargetAnimation(compositor, targetTranslation, curve);
-            visual.StartAnimation("Offset", translationAnim);
+            visual.StartAnimation("Translation", translationAnim);
         }
 
         if (values?.Rotation.HasValue == true || newState == InteractionState.Normal)
@@ -5216,7 +5539,9 @@ public sealed partial class Reconciler : IDisposable
             {
                 var anim = compositor.CreateVector3KeyFrameAnimation();
                 anim.Duration = def.Duration;
-                anim.Target = "Offset";
+                // Translation, not Offset: Offset is the layout position on a XAML handoff visual (#1432)
+                ElementCompositionPreview.SetIsTranslationEnabled(uie, true);
+                anim.Target = "Translation";
                 if (def.Loop) anim.IterationBehavior = AnimationIterationBehavior.Forever;
                 foreach (var kf in def.Keyframes)
                 {
@@ -5273,7 +5598,7 @@ public sealed partial class Reconciler : IDisposable
             var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(uie);
             visual.StopAnimation("Opacity");
             visual.StopAnimation("Scale");
-            visual.StopAnimation("Offset");
+            visual.StopAnimation("Translation");
             visual.StopAnimation("RotationAngle");
         }
         catch { /* No compositor (e.g. unit tests) */ }
@@ -6904,7 +7229,7 @@ public sealed partial class Reconciler : IDisposable
     /// element is not yet parented and so an ancestor <c>RequestedTheme</c> is
     /// unreachable through <paramref name="fe"/>'s own visual-tree walk. Pass
     /// <see cref="ElementTheme.Default"/> to fall back to fe-based resolution
-    /// (host-window themes set outside the Reactor tree; the 3-arg overload).
+    /// (for example, callers of the 3-arg overload).
     /// </param>
     public static void ApplyResourceOverrides(
         FrameworkElement fe,
@@ -6963,8 +7288,7 @@ public sealed partial class Reconciler : IDisposable
         // resolve against it: at mount fe is not yet parented, so its own visual-tree
         // walk cannot see an ancestor RequestedTheme and would otherwise fall back to
         // the app theme (the mount-theme bug). When no ambient theme is supplied
-        // (Default — direct public-API callers, or a host/window theme set outside the
-        // Reactor tree), keep the fe-based resolution.
+        // (Default — for example, direct public-API callers), keep the fe-based resolution.
         foreach (var (key, themeRef) in newOverrides.ThemeRefs)
         {
             var resolved = effectiveTheme != ElementTheme.Default
@@ -7037,7 +7361,7 @@ public sealed partial class Reconciler : IDisposable
         if (newEl is MenuFlyoutContentElement newMf && existingFlyout is WinUI.MenuFlyout menuFlyout)
         {
             menuFlyout.Items.Clear();
-            foreach (var item in newMf.Items) menuFlyout.Items.Add(MenuCommandFactory.CreateMenuFlyoutItem(item));
+            foreach (var item in newMf.Items) menuFlyout.Items.Add(MenuCommandFactory.CreateMenuFlyoutItem(item, this));
             FlyoutPlacement.Apply(menuFlyout, newMf.Placement);
             return;
         }
@@ -7148,7 +7472,7 @@ public sealed partial class Reconciler : IDisposable
                 // Placement is routed through FlyoutPlacement so Auto is never written
                 // (WinUI's FlyoutBase validator rejects it — see FlyoutPlacement).
                 FlyoutPlacement.Apply(menuFlyout, mf.Placement);
-                foreach (var item in mf.Items) menuFlyout.Items.Add(MenuCommandFactory.CreateMenuFlyoutItem(item));
+                foreach (var item in mf.Items) menuFlyout.Items.Add(MenuCommandFactory.CreateMenuFlyoutItem(item, this));
                 return menuFlyout;
             }
             default:
@@ -7466,4 +7790,3 @@ public sealed partial class Reconciler : IDisposable
         return pendingPropagation;
     }
 }
-
