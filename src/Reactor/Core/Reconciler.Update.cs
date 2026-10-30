@@ -1311,8 +1311,8 @@ public sealed partial class Reconciler
 
     /// <summary>
     /// Unmounts the item view of a container WinUI has unlinked from its item
-    /// (<c>IndexFromContainer</c> is -1) once that view's row is gone: removed from the list,
-    /// or shown by another container. WinUI normally raises a recycle
+    /// (<c>IndexFromContainer</c> is -1) once its item was cleared or that view's row is gone:
+    /// removed from the list, or shown by another container. WinUI normally raises a recycle
     /// <c>ContainerContentChanging</c> for such a container, but under rapid insert / remove
     /// churn it can park one offscreen in the items panel without ever doing so, which left the
     /// row's components mounted: effects never cleaned up and diagnostics writes were accepted
@@ -1322,16 +1322,20 @@ public sealed partial class Reconciler
     /// later layout pass without realizing it again (it defers container realignment for a
     /// move to the next layout pass; in practice it has re-realized moved rows).
     /// </summary>
-    private void UnmountOrphanedContainer(WinUI.ListViewBase listViewBase, WinPrim.SelectorItem container, ContentControl cc)
+    internal void UnmountOrphanedContainer(WinUI.ListViewBase listViewBase, WinPrim.SelectorItem container, ContentControl cc)
     {
-        if (GetElementTag(cc) is null || container.Content is not ReactorRow row) return;
-        bool inList = GetListState(listViewBase) is { } state
-            && state.ByKey.TryGetValue(row.Key, out var current) && ReferenceEquals(current, row);
-        if (inList)
+        if (GetElementTag(cc) is null) return;
+        if (container.Content is ReactorRow row)
         {
-            var owner = listViewBase.ContainerFromItem(row);
-            if (owner is null || ReferenceEquals(owner, container)) return;
+            bool inList = GetListState(listViewBase) is { } state
+                && state.ByKey.TryGetValue(row.Key, out var current) && ReferenceEquals(current, row);
+            if (inList)
+            {
+                var owner = listViewBase.ContainerFromItem(row);
+                if (owner is null || ReferenceEquals(owner, container)) return;
+            }
         }
+        else if (container.Content is not null) return;
         UnmountItemView(cc, clearContent: false);
     }
 
