@@ -299,6 +299,7 @@ internal static class SelfTestFixtureRegistry
         "SlotReplace_FrameReusedAfterSelfUnmount",
         "SlotReplace_ResizeGripChild",
         "SlotReplace_RegisteredHostReconcilesChild",
+        "SlotReplace_UnmountCallbackUpdates",
         // Issue #951 — keyed ListView/GridView rows must not announce Reactor's
         // internal row identity, and must honor an author-declared item name.
         "KLIA_NoRowIdentityLeak",
@@ -1106,6 +1107,31 @@ internal static class SelfTestFixtureRegistry
         "ConditionalChildSlot_UniformGridExitKeepsColumns",
         "TemplatedList_ChurnLeavesNoOrphanedRows",
         "TemplatedList_MoveKeepsRowComponent",
+        "TemplatedList_RowMovedTwiceLeavesNoParkedComponent",
+        "TemplatedList_RowMovedOutOfRangeLeavesNoParkedComponent",
+        "TemplatedList_RowMovedAsListCollapsesLeavesNoParkedComponent",
+        "TemplatedList_RowMovedAsListIsReinsertedLeavesNoParkedComponent",
+        "TemplatedList_RowMovedInUnselectedTabLeavesNoParkedComponent",
+        "TemplatedList_ParkedRowCleanupFailureIsReported",
+        "TemplatedList_ParkedRowCleanupKeepsDeclinedPropagation",
+        "TemplatedList_ParkedRowDescriptorTeardownFailureIsReported",
+        "TemplatedList_ParkedRowRegisteredTeardownFailureIsReported",
+        "TemplatedList_ParkedRowDecoratorTeardownFailureIsReported",
+        "TemplatedList_IsolatedRegisteredTeardownRecovers",
+        "TemplatedList_IsolatedRegisteredTeardownRecoversPooled",
+        "TemplatedList_NestedIsolatedRegisteredTeardownRecovers",
+        "TemplatedList_NestedIsolatedRegisteredTeardownRecoversPooled",
+        "TemplatedList_DecoratorIsolatedTeardownRecovers",
+        "TemplatedList_DecoratorIsolatedTeardownRecoversPooled",
+        "TemplatedList_IsolatedDescriptorTeardownTearsDownSlots",
+        "TemplatedList_IsolatedDescriptorTeardownTearsDownSlotsPooled",
+        "TemplatedList_IsolatedDescriptorPartialTeardownSkipsSlots",
+        "TemplatedList_IsolatedDescriptorPartialTeardownSkipsSlotsPooled",
+        "TemplatedList_IsolatedPropertyUnmountsRunIndependently",
+        "TemplatedList_IsolatedPropertyUnmountsRunIndependentlyPooled",
+        "TemplatedList_IsolatedFailuresKeepEncounterOrder",
+        "TemplatedList_IsolatedFailuresKeepEncounterOrderPooled",
+        "TemplatedList_UnmountWhileCollapsedDropsPendingSweep",
         "TemplatedList_ClearedContainerContentUnmountsView",
         // Issue 343 — CommandBar/TeachingTip Content reconciliation
         "Issue343_CommandBarContentUpdates",
@@ -2526,6 +2552,7 @@ internal static class SelfTestFixtureRegistry
         "SlotReplace_FrameReusedAfterSelfUnmount" => new SlotReplacementFixtures.FrameReusedAfterSelfUnmount(harness),
         "SlotReplace_ResizeGripChild" => new SlotReplacementFixtures.ResizeGripChild(harness),
         "SlotReplace_RegisteredHostReconcilesChild" => new SlotReplacementFixtures.RegisteredHostReconcilesChild(harness),
+        "SlotReplace_UnmountCallbackUpdates" => new SlotReplacementFixtures.UnmountCallbackUpdates(harness),
         // Issue #951 — keyed list/grid row automation names.
         "KLIA_NoRowIdentityLeak" => new KeyedListItemAutomationNameFixtures.NoRowIdentityLeak(harness),
         "KLIA_MatchesElementArray" => new KeyedListItemAutomationNameFixtures.MatchesElementArray(harness),
@@ -3303,6 +3330,41 @@ internal static class SelfTestFixtureRegistry
         "ConditionalChildSlot_UniformGridExitKeepsColumns" => new ConditionalChildSlotFixtures.UniformGridExitKeepsColumns(harness),
         "TemplatedList_ChurnLeavesNoOrphanedRows" => new TemplatedListOrphanContainerFixtures.ChurnLeavesNoOrphanedRows(harness),
         "TemplatedList_MoveKeepsRowComponent" => new TemplatedListOrphanContainerFixtures.MoveKeepsRowComponent(harness),
+        "TemplatedList_RowMovedTwiceLeavesNoParkedComponent" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "MovedTwice", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7"),
+        "TemplatedList_RowMovedOutOfRangeLeavesNoParkedComponent" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "MovedOutOfRange", count: 60, swaps: [(0, 15), (0, 50)], movedKey: "c15"),
+        "TemplatedList_RowMovedAsListCollapsesLeavesNoParkedComponent" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "MovedAsListCollapses", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", collapseWithLastSwap: true),
+        "TemplatedList_RowMovedAsListIsReinsertedLeavesNoParkedComponent" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "MovedAsListIsReinserted", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", reinsertWithLastSwap: true),
+        "TemplatedList_RowMovedInUnselectedTabLeavesNoParkedComponent" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "MovedInUnselectedTab", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", inUnselectedTab: true),
+        "TemplatedList_ParkedRowCleanupFailureIsReported" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "ParkedCleanupThrows", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", throwingParkedCleanup: true),
+        "TemplatedList_ParkedRowCleanupKeepsDeclinedPropagation" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "ParkedCleanupNestedDeclined", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", nestedDeclinedParkedCleanup: true),
+        "TemplatedList_ParkedRowDescriptorTeardownFailureIsReported" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "ParkedDescriptorThrows", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", throwingDescriptorTeardown: true),
+        "TemplatedList_ParkedRowRegisteredTeardownFailureIsReported" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "ParkedRegisteredThrows", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", throwingRegisteredTeardown: true),
+        "TemplatedList_ParkedRowDecoratorTeardownFailureIsReported" => new TemplatedListOrphanContainerFixtures.MovedRowLeavesNoParkedComponent(
+            harness, "ParkedDecoratorThrows", count: 30, swaps: [(7, 0), (0, 12)], movedKey: "c7", throwingDecoratorTeardown: true),
+        "TemplatedList_IsolatedRegisteredTeardownRecovers" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: false),
+        "TemplatedList_IsolatedRegisteredTeardownRecoversPooled" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: true),
+        "TemplatedList_NestedIsolatedRegisteredTeardownRecovers" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: false, nested: true),
+        "TemplatedList_NestedIsolatedRegisteredTeardownRecoversPooled" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: true, nested: true),
+        "TemplatedList_DecoratorIsolatedTeardownRecovers" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: false, decorator: true),
+        "TemplatedList_DecoratorIsolatedTeardownRecoversPooled" => new TemplatedListOrphanContainerFixtures.IsolatedRegisteredTeardownRecovers(harness, pool: true, decorator: true),
+        "TemplatedList_IsolatedDescriptorTeardownTearsDownSlots" => new TemplatedListOrphanContainerFixtures.IsolatedDescriptorTeardownTearsDownSlots(harness, pool: false),
+        "TemplatedList_IsolatedDescriptorTeardownTearsDownSlotsPooled" => new TemplatedListOrphanContainerFixtures.IsolatedDescriptorTeardownTearsDownSlots(harness, pool: true),
+        "TemplatedList_IsolatedDescriptorPartialTeardownSkipsSlots" => new TemplatedListOrphanContainerFixtures.IsolatedDescriptorTeardownTearsDownSlots(harness, pool: false, hookTearsDownChild: true),
+        "TemplatedList_IsolatedDescriptorPartialTeardownSkipsSlotsPooled" => new TemplatedListOrphanContainerFixtures.IsolatedDescriptorTeardownTearsDownSlots(harness, pool: true, hookTearsDownChild: true),
+        "TemplatedList_IsolatedPropertyUnmountsRunIndependently" => new TemplatedListOrphanContainerFixtures.IsolatedPropertyUnmountsRunIndependently(harness, pool: false),
+        "TemplatedList_IsolatedPropertyUnmountsRunIndependentlyPooled" => new TemplatedListOrphanContainerFixtures.IsolatedPropertyUnmountsRunIndependently(harness, pool: true),
+        "TemplatedList_IsolatedFailuresKeepEncounterOrder" => new TemplatedListOrphanContainerFixtures.IsolatedFailuresKeepEncounterOrder(harness, pool: false),
+        "TemplatedList_IsolatedFailuresKeepEncounterOrderPooled" => new TemplatedListOrphanContainerFixtures.IsolatedFailuresKeepEncounterOrder(harness, pool: true),
+        "TemplatedList_UnmountWhileCollapsedDropsPendingSweep" => new TemplatedListOrphanContainerFixtures.UnmountWhileCollapsedDropsPendingSweep(harness),
         "TemplatedList_ClearedContainerContentUnmountsView" => new TemplatedListOrphanContainerFixtures.ClearedContainerContentUnmountsView(harness),
         // Issue 343 — CommandBar/TeachingTip Content reconciliation
         "Issue343_CommandBarContentUpdates" => new Issue343Fixtures.CommandBarContentUpdates(harness),
@@ -4267,6 +4329,5 @@ internal static class SelfTestFixtureRegistry
         _ => null,
     };
 }
-
 
 

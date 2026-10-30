@@ -416,6 +416,24 @@ Conventions for contributors:
   ([issue #1430](https://github.com/microsoft/microsoft-ui-reactor/issues/1430),
   spec 020 §6.2, §7, §9.2).
 
+- **Unmount callbacks survive managed-wrapper collection** (spec 047 §3).
+  `.OnUnmount(...)` now lives in native attached state rather than a weak table
+  keyed by a managed wrapper, so a still-mounted control keeps its teardown callback
+  when WinRT projects a new wrapper before removal. Callbacks stay scoped to the host
+  that registered them. A wrapper that shares its control with an inner target, as
+  `Flyout` does, no longer erases the target's callback when the wrapper has no callback
+  of its own, or drops its own while the target re-registers.
+
+- **Keyed-list diagnostics retain their native control identity** (spec 047 §3).
+  Duplicate/null-key warning counters now share one ledger across managed wrappers
+  for the same control instead of emitting a second entry after wrapper collection.
+
+- **`AutoSuggestBox` clears stale choices when `Suggestions` becomes empty**
+  (spec 047 §6.1). The suggestions binding now clears the native `ItemsSource`
+  instead of skipping empty updates, preserving the existing control and allowing
+  later suggestions to repopulate it. Empty suggestions leave `ItemsSource` null,
+  so direct `Items.Add(...)` setters continue to work on mount.
+
 - **Keyed children keep their own controls while siblings exit** (spec 014, feature 2).
   Fading controls retained from an earlier render no longer shift keyed prefix, suffix,
   removal or reorder updates onto another child's control. Live controls keep their
@@ -536,12 +554,21 @@ Conventions for contributors:
   exit transition is still playing also no longer pairs its siblings with the wrong control.
 
 - **`ListView<T>` / `GridView<T>` rows are unmounted when WinUI drops their container
-  without recycling it** (issue #1423). Under fast insert / remove churn WinUI could park
-  a container offscreen, unlinked from any item, without raising the recycle
+  without recycling it** (issues #1423, #1440). Under fast insert / remove / move churn WinUI
+  could park a container offscreen, unlinked from any item, without raising the recycle
   `ContainerContentChanging`, so the row's components stayed mounted: their effects never
   cleaned up, and a `ReactorDiagnostics.TrySetState` on one was accepted but never rendered.
-  The sweep also handles an unlinked container whose item was already cleared while its
-  template still holds a live view; its visuals remain available for the native delete transition.
+  The update-time sweep also handles an unlinked container whose item was already cleared while
+  its template still holds a live view; its visuals remain available for the native delete
+  transition. WinUI parks it in the layout pass after the update (a row moved twice, or moved
+  out of the realized range, is enough), so after a structural change the reconciler now checks
+  the containers once that layout pass completes. A throwing cleanup no longer stops that sweep:
+  every parked row is torn down and the failure goes to the `RenderErrorHandler` as
+  `Cleanup`. Teardowns that finish regardless of cleanup failures (issue #1291) now also
+  collect a throwing control handler, descriptor `OnUnmount` hook or property unmount callback,
+  decorator or `RegisterType` unmount callback rather than stopping at it: each failure is
+  reported once, in order, the children it did not reach are torn down (once each), and the
+  half-torn-down control is never pooled.
 
 - **`REACTOR_A11Y_001` no longer flags text buttons with a non-literal string label**
   (spec 006 §6.3). `Button(S("Usage_Refresh"), onClick)` — a localized resource lookup,
