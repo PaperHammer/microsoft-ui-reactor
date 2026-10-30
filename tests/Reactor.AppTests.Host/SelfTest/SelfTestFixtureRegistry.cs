@@ -299,6 +299,7 @@ internal static class SelfTestFixtureRegistry
         "SlotReplace_FrameReusedAfterSelfUnmount",
         "SlotReplace_ResizeGripChild",
         "SlotReplace_RegisteredHostReconcilesChild",
+        "SlotReplace_UnmountCallbackUpdates",
         // Issue #951 — keyed ListView/GridView rows must not announce Reactor's
         // internal row identity, and must honor an author-declared item name.
         "KLIA_NoRowIdentityLeak",
@@ -2551,6 +2552,7 @@ internal static class SelfTestFixtureRegistry
         "SlotReplace_FrameReusedAfterSelfUnmount" => new SlotReplacementFixtures.FrameReusedAfterSelfUnmount(harness),
         "SlotReplace_ResizeGripChild" => new SlotReplacementFixtures.ResizeGripChild(harness),
         "SlotReplace_RegisteredHostReconcilesChild" => new SlotReplacementFixtures.RegisteredHostReconcilesChild(harness),
+        "SlotReplace_UnmountCallbackUpdates" => new SlotReplacementFixtures.UnmountCallbackUpdates(harness),
         // Issue #951 — keyed list/grid row automation names.
         "KLIA_NoRowIdentityLeak" => new KeyedListItemAutomationNameFixtures.NoRowIdentityLeak(harness),
         "KLIA_MatchesElementArray" => new KeyedListItemAutomationNameFixtures.MatchesElementArray(harness),
@@ -4327,6 +4329,5 @@ internal static class SelfTestFixtureRegistry
         _ => null,
     };
 }
-
 
 

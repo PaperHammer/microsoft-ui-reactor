@@ -409,6 +409,24 @@ Conventions for contributors:
 
 ### Fixed
 
+- **Unmount callbacks survive managed-wrapper collection** (spec 047 §3).
+  `.OnUnmount(...)` now lives in native attached state rather than a weak table
+  keyed by a managed wrapper, so a still-mounted control keeps its teardown callback
+  when WinRT projects a new wrapper before removal. Callbacks stay scoped to the host
+  that registered them. A wrapper that shares its control with an inner target, as
+  `Flyout` does, no longer erases the target's callback when the wrapper has no callback
+  of its own, or drops its own while the target re-registers.
+
+- **Keyed-list diagnostics retain their native control identity** (spec 047 §3).
+  Duplicate/null-key warning counters now share one ledger across managed wrappers
+  for the same control instead of emitting a second entry after wrapper collection.
+
+- **`AutoSuggestBox` clears stale choices when `Suggestions` becomes empty**
+  (spec 047 §6.1). The suggestions binding now clears the native `ItemsSource`
+  instead of skipping empty updates, preserving the existing control and allowing
+  later suggestions to repopulate it. Empty suggestions leave `ItemsSource` null,
+  so direct `Items.Add(...)` setters continue to work on mount.
+
 - **Keyed children keep their own controls while siblings exit** (spec 014, feature 2).
   Fading controls retained from an earlier render no longer shift keyed prefix, suffix,
   removal or reorder updates onto another child's control. Live controls keep their
