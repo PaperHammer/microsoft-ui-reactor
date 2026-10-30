@@ -411,7 +411,8 @@ Conventions for contributors:
 
 - Async resource hooks detect dependency changes even when hashes collide and
   treat mismatched cached dependencies as a miss, preventing wrong-query data
-  in `UseResource` and `UseInfiniteResource`
+  in `UseResource` and `UseInfiniteResource`. Cursor-paged resources also use
+  the requested predecessor's cursor after page eviction and cache invalidation
   ([issue #1430](https://github.com/microsoft/microsoft-ui-reactor/issues/1430),
   spec 020 §6.2, §7, §9.2).
 
