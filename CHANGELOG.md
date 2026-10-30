@@ -529,12 +529,21 @@ Conventions for contributors:
   exit transition is still playing also no longer pairs its siblings with the wrong control.
 
 - **`ListView<T>` / `GridView<T>` rows are unmounted when WinUI drops their container
-  without recycling it** (issue #1423). Under fast insert / remove churn WinUI could park
-  a container offscreen, unlinked from any item, without raising the recycle
+  without recycling it** (issues #1423, #1440). Under fast insert / remove / move churn WinUI
+  could park a container offscreen, unlinked from any item, without raising the recycle
   `ContainerContentChanging`, so the row's components stayed mounted: their effects never
   cleaned up, and a `ReactorDiagnostics.TrySetState` on one was accepted but never rendered.
-  The sweep also handles an unlinked container whose item was already cleared while its
-  template still holds a live view; its visuals remain available for the native delete transition.
+  The update-time sweep also handles an unlinked container whose item was already cleared while
+  its template still holds a live view; its visuals remain available for the native delete
+  transition. WinUI parks it in the layout pass after the update (a row moved twice, or moved
+  out of the realized range, is enough), so after a structural change the reconciler now checks
+  the containers once that layout pass completes. A throwing cleanup no longer stops that sweep:
+  every parked row is torn down and the failure goes to the `RenderErrorHandler` as
+  `Cleanup`. Teardowns that finish regardless of cleanup failures (issue #1291) now also
+  collect a throwing control handler, descriptor `OnUnmount` hook or property unmount callback,
+  decorator or `RegisterType` unmount callback rather than stopping at it: each failure is
+  reported once, in order, the children it did not reach are torn down (once each), and the
+  half-torn-down control is never pooled.
 
 - **`REACTOR_A11Y_001` no longer flags text buttons with a non-literal string label**
   (spec 006 §6.3). `Button(S("Usage_Refresh"), onClick)` — a localized resource lookup,
