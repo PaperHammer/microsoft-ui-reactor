@@ -275,10 +275,10 @@ public interface IPersistedStateScope
 }
 ```
 
-`TryGet<T>` distinguishes a missing key from a stored `null`. A stored null
-returns `true` for reference types and nullable value types, and `false` for
-non-nullable value types. Missing keys and incompatible non-null values also
-return `false`. On remount, the hook restores the null while the entry remains
+The public `TryGet<T>` returns `false` for missing keys, stored nulls, and
+incompatible values. `UsePersisted` uses an internal lookup on the built-in
+scopes to distinguish a missing key from a stored null. On remount, reference
+and nullable value-type state restores that null while the entry remains
 available under the same key in the same scope.
 
 #### Two built-in scopes
@@ -362,13 +362,13 @@ need this — it's bounded by window lifetime.
   `ApplicationPersistedScope` + `LruCache<TKey,TValue>` helper).
 - New `src/Reactor/Core/PersistedStateScope.cs`,
   `WindowPersistedScope.cs`.
-- [`src/Reactor/Core/RenderContext.cs:877-906`](../../src/Reactor/Core/RenderContext.cs#L877-L906)
-  — `UsePersisted` resolves the scope and reads its typed value at hook entry;
-  [`SaveToCache` at lines 3013-3017](../../src/Reactor/Core/RenderContext.cs#L3013-L3017)
-  saves the latest value on unmount.
-- Typed lookup implementations:
-  [`WindowPersistedScope.cs:43-56`](../../src/Reactor/Core/WindowPersistedScope.cs#L43-L56)
-  and [`PersistedStateCache.cs:46-59`](../../src/Reactor/Core/PersistedStateCache.cs#L46-L59).
+- [`RenderContext.UsePersisted`](../../src/Reactor/Core/RenderContext.cs)
+  resolves the scope and restores a compatible cached value at hook entry;
+  `PersistedHookState<T>.SaveToCache` saves the latest value on unmount.
+- [`WindowPersistedScope.TryGet<T>`](../../src/Reactor/Core/WindowPersistedScope.cs)
+  and [`ApplicationPersistedScope.TryGet<T>`](../../src/Reactor/Core/PersistedStateCache.cs)
+  keep their non-null public lookup behavior. Their internal `TryGetValue` methods
+  also expose stored nulls for hook restoration.
 - `src/Reactor.Analyzers` — new `REACTOR_PERSIST_001`.
 
 ---
