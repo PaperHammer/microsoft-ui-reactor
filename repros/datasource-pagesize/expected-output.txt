@@ -1,0 +1,38 @@
+UseDataSource PageSize repro (zero-based indexes)
+Reactor: 0.0.0-local+778c71ea9b60e89d707a4559f7f0c4ed25eba244
+
+1. Request PageSize=10, options omitted
+  FAIL Options omitted: 90 mismatched rows in [0, 99]
+    index 10: expected 10, actual null
+    index 11: expected 11, actual null
+    index 12: expected 12, actual null
+    index 50: expected 50, actual 10
+  PASS Control: matching options: 0 mismatched rows in [0, 99]
+    index 50: expected 50, actual 50
+
+2. Same hook changes both page sizes from 10 to 20
+  PASS Control: initial size 10: 0 mismatched rows in [0, 9]
+  Other dependency changed: False; resource reused: True
+  FAIL Changed size only: 10 mismatched rows in [10, 19]
+    index 10: expected 10, actual 20
+    index 11: expected 11, actual 21
+    index 12: expected 12, actual 22
+  PASS Control: initial size 10: 0 mismatched rows in [0, 9]
+  Other dependency changed: True; resource reused: False
+  FAIL Changed size with dependency restart: 10 mismatched rows in [10, 19]
+    index 10: expected 10, actual 20
+    index 11: expected 11, actual 21
+    index 12: expected 12, actual 22
+  PASS Control: fresh hook at size 20: 0 mismatched rows in [10, 19]
+
+3. Two hooks share a prefix but use different page sizes
+  PASS Control: first hook at size 10: 0 mismatched rows in [0, 9]
+  PASS Control: distinct prefixes: 0 mismatched rows in [0, 19]
+  PASS Control: first hook at size 10: 0 mismatched rows in [0, 9]
+  FAIL Shared prefix, size-20 hook: 10 mismatched rows in [0, 19]
+    index 10: expected 10, actual null
+    index 11: expected 11, actual null
+    index 12: expected 12, actual null
+
+Summary: 7 passed, 4 failed.
+Exit 1: incorrect row values detected. Exit 0: all row expectations met. Exit 2: setup/runtime exception.
